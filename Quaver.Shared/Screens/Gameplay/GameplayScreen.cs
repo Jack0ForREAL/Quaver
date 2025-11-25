@@ -1703,14 +1703,8 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
         public override void Draw(GameTime gameTime)
         {
-            // Debug Color Codes (Look at top-left corner):
-            // WHITE  = Code started running
-            // ORANGE = FOLDER ERROR (Check quaver.cfg SongDirectory)
-            // PURPLE = FILE ERROR (Check if images are named frame0.jpg, frame1.jpg...)
-            // RED    = CRASH (File permissions or other error)
-            // GREEN  = SUCCESS (Video is rendering)
-
-            var debugColor = Color.White;
+            // 1. Draw the Game Elements first
+            base.Draw(gameTime);
 
             try
             {
@@ -1718,69 +1712,58 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                 
                 if (currentMap != null)
                 {
-                    // 1. Get Path
                     var songsFolder = ConfigManager.SongDirectory.Value;
                     var mapFolder = currentMap.Directory;
                     var videoPath = Path.Combine(songsFolder, mapFolder, "video");
+                    var currentTime = AudioEngine.Track.Time;
+                    
+                    // Calculate Frame (30 FPS)
+                    var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
+                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
-                    if (!Directory.Exists(videoPath))
+                    // --- LOGGING LOGIC (Runs once every ~30 frames to save performance) ---
+                    if (frameIndex % 30 == 0) 
                     {
-                        debugColor = Color.Orange; // FOLDER NOT FOUND
-                    }
-                    else
-                    {
-                        // 2. Calculate Frame
-                        var currentTime = AudioEngine.Track.Time;
-                        var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
-                        var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+                        var logMsg = $"[Time: {currentTime:F0}] Searching: {frameFile} | Found: {File.Exists(frameFile)}";
+                        
+                        if (!Directory.Exists(videoPath))
+                             logMsg = "ERROR: Video folder not found at: " + videoPath;
 
-                        if (!File.Exists(frameFile))
-                        {
-                            debugColor = Color.Purple; // FILE NOT FOUND
-                        }
-                        else
-                        {
-                            // 3. Draw Video (Behind Game)
-                            using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
-                            {
-                                var device = GameBase.Game.GraphicsDevice;
-                                var videoFrame = Texture2D.FromStream(device, stream);
-                                var spriteBatch = GameBase.Game.SpriteBatch;
-
-                                spriteBatch.Begin();
-                                spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
-                                spriteBatch.End();
-
-                                videoFrame.Dispose();
-                                debugColor = Color.Green; // SUCCESS
+                        // Write to C:\quaver_log.txt
+                        // If this crashes, try changing path to your desktop path manually
+                        try {
+                            using (StreamWriter sw = File.AppendText(@"C:\quaver_log.txt")) {
+                                sw.WriteLine(logMsg);
                             }
+                        } catch {}
+                    }
+                    // ---------------------------------------------------------------------
+
+                    if (Directory.Exists(videoPath) && File.Exists(frameFile))
+                    {
+                        using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
+                        {
+                            var device = GameBase.Game.GraphicsDevice;
+                            var videoFrame = Texture2D.FromStream(device, stream);
+                            var spriteBatch = GameBase.Game.SpriteBatch;
+
+                            spriteBatch.Begin();
+                            // Draw ON TOP to guarantee visibility for testing
+                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
+                            spriteBatch.End();
+
+                            videoFrame.Dispose();
                         }
                     }
                 }
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                debugColor = Color.Red; // CRASHED
+                // Log Crash
+                try {
+                     File.AppendAllText(@"C:\quaver_log.txt", "CRASH: " + e.Message + "\n");
+                } catch {}
             }
-
-            // 4. Draw Game (Notes, UI, etc.)
-            base.Draw(gameTime);
-
-            // 5. Draw the Debug Square (ON TOP of everything)
-            try 
-            {
-                var device = GameBase.Game.GraphicsDevice;
-                var debugTexture = new Texture2D(device, 1, 1);
-                debugTexture.SetData(new[] { Color.White });
-
-                var spriteBatch = GameBase.Game.SpriteBatch;
-                spriteBatch.Begin();
-                spriteBatch.Draw(debugTexture, new Rectangle(0, 0, 100, 100), debugColor);
-                spriteBatch.End();
-                
-                debugTexture.Dispose();
-            }
-            catch {}
         }
     }
 }
