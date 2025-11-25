@@ -12,10 +12,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        submodules: false # Don't let GitHub try to do it automatically
+        submodules: false
 
-    - name: Manual Submodule Setup
-      # This initializes git, tells it to IGNORE the private server folder, then downloads the rest
+    - name: Initialize Submodules (Skip Private)
       run: |
         git submodule init
         git config submodule.Quaver.Server.Client.update none
@@ -26,8 +25,26 @@ jobs:
       with:
         dotnet-version: 6.0.x
 
+    - name: Fix Dependencies (PowerShell)
+      shell: pwsh
+      run: |
+        # 1. Define the path to the shared project file
+        $proj = "Quaver.Shared/Quaver.Shared.csproj"
+        
+        # 2. Read the file content
+        $content = Get-Content $proj -Raw
+        
+        # 3. SWAP THE LINK: Replace the missing Project Reference with the existing DLL Reference
+        # This Regex looks for the line including the Server.Client.csproj and replaces it
+        $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
+        
+        # 4. Save the fixed file
+        Set-Content $proj $content
+        
+        # 5. Force install the missing TimeAgo library just in case
+        dotnet add Quaver.Shared/Quaver.Shared.csproj package TimeAgo
+
     - name: Restore dependencies
-      # We target the PROJECT, not the SOLUTION, to avoid looking for missing files
       run: dotnet restore Quaver/Quaver.csproj
 
     - name: Build and Publish
