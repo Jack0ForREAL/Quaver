@@ -215,57 +215,47 @@ namespace Quaver.Shared.Screens.Gameplay
 
         public override void Draw(GameTime gameTime)
         {
-            // 1. Standard Game Draw
+            // Clear screen to black
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
-            Background.Draw(gameTime);
-            BattleRoyaleBackgroundAlerter?.Draw(gameTime);
-            Screen.Ruleset?.Draw(gameTime);
-            Container?.Draw(gameTime);
 
-            // 2. VIDEO MOD: RENDER ON TOP (For Debugging)
-            DrawVideoLayer();
+            // 1. DRAW VIDEO (Bottom Layer)
+            // Only draw if video exists
+            if (!DrawVideoLayer()) 
+            {
+                // If no video, draw standard background
+                Background.Draw(gameTime);
+            }
+
+            // 2. Draw everything else on top
+            BattleRoyaleBackgroundAlerter?.Draw(gameTime);
+            Screen.Ruleset?.Draw(gameTime); // Notes
+            Container?.Draw(gameTime);      // UI
         }
 
-        // --- VIDEO MOD LOGIC ---
-        private void DrawVideoLayer()
+        // --- VIDEO MOD LOGIC (FIXED CRASH) ---
+        private bool DrawVideoLayer()
         {
             try
             {
                 var currentMap = MapManager.Selected.Value;
-                if (currentMap == null) return;
-
-                // Force background invisible just in case
-                Background.Alpha = 0;
+                if (currentMap == null) return false;
 
                 var songsFolder = ConfigManager.SongDirectory.Value;
                 var mapFolder = currentMap.Directory;
                 var videoPath = Path.Combine(songsFolder, mapFolder, "video");
 
+                // Optimization: If folder doesn't exist, return false immediately to let normal BG draw
+                if (!Directory.Exists(videoPath)) return false;
+
                 var currentTime = AudioEngine.Track.Time;
+                // Calculate frame index (30 FPS)
                 var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
-                var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
-                // --- LOGGING ---
-                // Writes to Quaver/Logs/video_debug.txt
-                // Logs EVERY frame for the first 5 seconds (150 frames) to catch startup issues
-                if (frameIndex < 150 || frameIndex % 60 == 0) 
-                {
-                    try {
-                        var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
-                        if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
-
-                        var logPath = Path.Combine(logDir, "video_debug.txt");
-                        var status = File.Exists(frameFile) ? "OK" : "MISSING";
-                        File.AppendAllText(logPath, $"[{frameIndex}] {frameFile} -> {status}" + Environment.NewLine);
-                    } catch {}
-                }
-                // ----------------
-
-                if (!Directory.Exists(videoPath)) return;
-
-                // Only load a new texture if the frame changed! (Fixes Lag)
+                // Load new frame if needed
                 if (frameIndex != LastVideoFrameIndex)
                 {
+                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+                    
                     if (File.Exists(frameFile))
                     {
                         if (VideoTexture != null) VideoTexture.Dispose();
@@ -278,27 +268,27 @@ namespace Quaver.Shared.Screens.Gameplay
                     LastVideoFrameIndex = frameIndex;
                 }
 
-                // Draw the texture if it exists
+                // Draw the texture
                 if (VideoTexture != null && !VideoTexture.IsDisposed)
                 {
-                    var spriteBatch = GameBase.Game.SpriteBatch;
-                    // Use Immediate mode to force draw on top
-                    spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.AlphaBlend);
-                    
-                    int w = GameBase.Game.GraphicsDevice.Viewport.Width;
-                    int h = GameBase.Game.GraphicsDevice.Viewport.Height;
-                    
-                    spriteBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
-                    spriteBatch.End();
+                    // FIX: Create a LOCAL SpriteBatch to prevent "Begin" crash
+                    using (var myBatch = new SpriteBatch(GameBase.Game.GraphicsDevice))
+                    {
+                        myBatch.Begin();
+                        int w = GameBase.Game.GraphicsDevice.Viewport.Width;
+                        int h = GameBase.Game.GraphicsDevice.Viewport.Height;
+                        myBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
+                        myBatch.End();
+                    }
+                    return true; // Video drawn successfully
                 }
             }
-            catch (Exception e)
+            catch 
             {
-                try {
-                    var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "video_debug.txt");
-                    File.AppendAllText(logPath, "CRASH: " + e.Message + Environment.NewLine);
-                } catch {}
+                // If error, return false so normal background takes over
+                return false;
             }
+            return false;
         }
         // -----------------------
 
