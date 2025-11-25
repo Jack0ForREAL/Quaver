@@ -1,14 +1,9 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
-*/
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO; // Added for Video Mod
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics; // Added for Texture2D
 using Quaver.API.Enums;
 using Quaver.API.Helpers;
 using Quaver.API.Maps.Processors.Rating;
@@ -52,156 +47,42 @@ namespace Quaver.Shared.Screens.Gameplay
 {
     public class GameplayScreenView : ScreenView
     {
-        /// <summary>
-        ///     Reference to the gameplay screen.
-        /// </summary>
         public new GameplayScreen Screen { get; }
-
-        /// <summary>
-        ///     Handles calculating rating
-        /// </summary>
         internal RatingProcessorKeys RatingProcessor { get; }
-
-        /// <summary>
-        ///     The map's background.
-        /// </summary>
         public BackgroundImage Background { get; private set; }
-
-        /// <summary>
-        ///     The progress bar that displays the current song time.
-        /// </summary>
         public SongTimeProgressBar ProgressBar { get; private set; }
-
-        /// <summary>
-        ///     The display for the user's score.
-        /// </summary>
         public GameplayNumberDisplay ScoreDisplay { get; private set; }
-
-        /// <summary>
-        ///     The display for the user's rating.
-        /// </summary>
         public GameplayNumberDisplay RatingDisplay { get; private set; }
-
-        /// <summary>
-        ///     The display for the user's accuracy
-        /// </summary>
         public GameplayNumberDisplay AccuracyDisplay { get; private set; }
-
-        /// <summary>
-        ///     The keys per second display.
-        /// </summary>
         public KeysPerSecond KpsDisplay { get; private set; }
-
-        /// <summary>
-        ///     Displays the current judgement counts.
-        /// </summary>
         public JudgementCounter JudgementCounter { get; private set; }
-
-        /// <summary>
-        ///     Displays the user's current grade.
-        /// </summary>
         public GradeDisplay GradeDisplay { get; private set; }
-
-        /// <summary>
-        ///     The scoreboard on the left side of the screern
-        ///     (normal OR red team)
-        ///     The scoreboard
-        /// </summary>
         public Scoreboard ScoreboardLeft { get; set; }
-
-        /// <summary>
-        ///     The scoreboard on the right side of the screen
-        /// </summary>
         public Scoreboard ScoreboardRight { get; set; }
-
-        /// <summary>
-        ///     The display to skip the map.
-        /// </summary>
         public SkipDisplay SkipDisplay { get; set; }
-
-        /// <summary>
-        ///     The sprite used solely to fade the screen with transitions.
-        /// </summary>
         public Sprite Transitioner { get; set; }
-
-        /// <summary>
-        ///     The pause overlay for the screen.
-        /// </summary>
         public PauseScreen PauseScreen { get; set; }
-
-        /// <summary>
-        /// </summary>
         private ComboAlert ComboAlert { get; set; }
-
-        /// <summary>
-        ///     Determines if the transitioner is currently fading on play restart.
-        /// </summary>
         public bool FadingOnRestartKeyPress { get; set; }
-
-        /// <summary>
-        ///     Determines if the transitioner is currently fading on play restart release.
-        ///     When the user presses the release key, but not fully. They let it go.
-        /// </summary>
         public bool FadingOnRestartKeyRelease { get; set; }
-
-        /// <summary>
-        ///     Determines if the transitioner is currently fading on play completion.
-        /// </summary>
         public bool FadingOnPlayCompletion { get; set; }
-
-        /// <summary>
-        ///     Determines if when the play has failed, the screen was turned to red.
-        /// </summary>
         public bool ScreenChangedToRedOnFailure { get; set; }
-
-        /// <summary>
-        ///     When true, the results screen is currently loading asynchronously.
-        /// </summary>
         private bool ResultsScreenLoadInitiated { get; set; }
-
-        /// <summary>
-        ///     When the results screen has successfully loaded, we'll be considered clear
-        ///     to exit and fade out the screen.
-        /// </summary>
         private bool ClearToExitScreen { get; set; }
-
-        /// <summary>
-        /// </summary>
         private OffsetCalibratorTip Tip { get; set; }
-
-        /// <summary>
-        /// </summary>
         private MultiplayerEndGameWaitTime MultiplayerEndTime { get; set; }
-
-        /// <summary>
-        ///     If true, the game will stop waiting for new scoreboard users
-        /// </summary>
         private bool StopCheckingForScoreboardUsers { get; set; }
-
-        /// <summary>
-        /// </summary>
         private BattleRoyaleBackgroundAlerter BattleRoyaleBackgroundAlerter { get; }
-
-        /// <summary>
-        /// </summary>
         public ScoreboardUser SelfScoreboard { get; private set; }
-
-        /// <summary>
-        /// </summary>
         private SpectatorDialog SpectatorDialog { get; set; }
-
-        /// <summary>
-        /// </summary>
         private SpectatorCount SpectatorCount { get; }
-
-        /// <summary>
-        /// </summary>
         private ReplayController ReplayController { get; }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="screen"></param>
+        // --- VIDEO MOD VARIABLES ---
+        private Texture2D VideoTexture;
+        private int LastVideoFrameIndex = -1;
+        // ---------------------------
+
         public GameplayScreenView(Screen screen) : base(screen)
         {
             Screen = (GameplayScreen)screen;
@@ -232,7 +113,6 @@ namespace Quaver.Shared.Screens.Gameplay
             if (ConfigManager.DisplayComboAlerts.Value && !Screen.IsSongSelectPreview)
                 ComboAlert = new ComboAlert(Screen.Ruleset.ScoreProcessor) { Parent = Container };
 
-            // Create judgement status display
             if (ConfigManager.DisplayJudgementCounter.Value)
             {
                 if (OnlineManager.CurrentGame == null || OnlineManager.CurrentGame.Ruleset != MultiplayerGameRuleset.Team)
@@ -281,7 +161,6 @@ namespace Quaver.Shared.Screens.Gameplay
                 };
             }
 
-            // Create screen transitioner to perform any animations.
             Transitioner = new Sprite()
             {
                 Parent = Container,
@@ -290,16 +169,13 @@ namespace Quaver.Shared.Screens.Gameplay
                 Alpha = 1,
                 Animations =
                 {
-                    // Fade in from black.
                     new Animation(AnimationProperty.Alpha, Easing.Linear, 1, 0, 1500)
                 }
             };
 
-            // Create pause screen last.
             if (Screen.SpectatorClient == null)
                 PauseScreen = new PauseScreen(Screen) { Parent = Container };
 
-            // Notify the user if their local offset is actually set for this map.
             if (!Screen.IsSongSelectPreview && MapManager.Selected.Value.LocalOffset != 0)
             {
                 NotificationManager.Show(NotificationLevel.Info, $"The local audio offset for this map is: {MapManager.Selected.Value.LocalOffset} ms",
@@ -319,10 +195,6 @@ namespace Quaver.Shared.Screens.Gameplay
                 OnlineManager.Client.OnGameEnded += OnGameEnded;
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="gameTime"></param>
         public override void Update(GameTime gameTime)
         {
             HandleWaitingForPlayersDialog();
@@ -341,13 +213,14 @@ namespace Quaver.Shared.Screens.Gameplay
             }
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="gameTime"></param>
         public override void Draw(GameTime gameTime)
         {
+            // Clear the screen
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
+
+            // --- VIDEO MOD: RENDER BEHIND BACKGROUND ---
+            DrawVideoLayer();
+            // -------------------------------------------
 
             Background.Draw(gameTime);
             BattleRoyaleBackgroundAlerter?.Draw(gameTime);
@@ -355,11 +228,74 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Draw(gameTime);
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
+        // --- VIDEO MOD LOGIC ---
+        private void DrawVideoLayer()
+        {
+            try
+            {
+                var currentMap = MapManager.Selected.Value;
+                if (currentMap == null) return;
+
+                var songsFolder = ConfigManager.SongDirectory.Value;
+                var mapFolder = currentMap.Directory;
+                var videoPath = Path.Combine(songsFolder, mapFolder, "video");
+
+                // Optimization: Only check folder existence once per frame, not heavy
+                if (!Directory.Exists(videoPath)) return;
+
+                var currentTime = AudioEngine.Track.Time;
+                // Calculate frame index (30 FPS)
+                var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
+
+                // Only load a new texture if the frame changed! (Fixes Lag)
+                if (frameIndex != LastVideoFrameIndex)
+                {
+                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+                    
+                    if (File.Exists(frameFile))
+                    {
+                        // Dispose old frame
+                        if (VideoTexture != null)
+                        {
+                            VideoTexture.Dispose();
+                            VideoTexture = null;
+                        }
+
+                        // Load new frame
+                        using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
+                        {
+                            VideoTexture = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
+                        }
+                    }
+                    LastVideoFrameIndex = frameIndex;
+                }
+
+                // Draw the texture if it exists
+                if (VideoTexture != null && !VideoTexture.IsDisposed)
+                {
+                    var spriteBatch = GameBase.Game.SpriteBatch;
+                    spriteBatch.Begin();
+                    
+                    int w = GameBase.Game.GraphicsDevice.Viewport.Width;
+                    int h = GameBase.Game.GraphicsDevice.Viewport.Height;
+                    
+                    spriteBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
+                    spriteBatch.End();
+                }
+            }
+            catch 
+            {
+                // Silent fail to prevent gameplay interruption
+            }
+        }
+        // -----------------------
+
         public override void Destroy()
         {
+            // Clean up video texture when screen closes
+            if (VideoTexture != null)
+                VideoTexture.Dispose();
+
             if (OnlineManager.Client != null)
                 OnlineManager.Client.OnGameEnded -= OnGameEnded;
 
@@ -367,9 +303,6 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Destroy();
         }
 
-        /// <summary>
-        ///     Creates the background sprite for the screen.
-        /// </summary>
         private void CreateBackground()
         {
             var background = BackgroundHelper.RawTexture;
@@ -377,14 +310,9 @@ namespace Quaver.Shared.Screens.Gameplay
             if (background == null)
                 background = UserInterface.MenuBackgroundClear;
 
-            // We don't set a parent here because we have to manually call draw on the background, as the
-            // ScreenView's container is drawn after the ruleset.
             Background = new BackgroundImage(background, 100 - ConfigManager.BackgroundBrightness.Value, false);
         }
 
-        /// <summary>
-        ///     Creates the progress bar if the user defined it in config.
-        /// </summary>
         private void CreateProgressBar()
         {
             if (!ConfigManager.DisplaySongTimeProgress.Value)
@@ -401,9 +329,6 @@ namespace Quaver.Shared.Screens.Gameplay
             };
         }
 
-        /// <summary>
-        ///     Creates a mini progress bar if the user defined it in config.
-        /// </summary>
         private void CreateMiniProgressBar()
         {
             if (!ConfigManager.DisplaySongTimeProgress.Value)
@@ -422,9 +347,6 @@ namespace Quaver.Shared.Screens.Gameplay
             };
         }
 
-        /// <summary>
-        ///     Creates the score display sprite.
-        /// </summary>
         private void CreateScoreDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
@@ -439,9 +361,6 @@ namespace Quaver.Shared.Screens.Gameplay
             };
         }
 
-        /// <summary>
-        ///     Creates the rating display sprite.
-        /// </summary>
         private void CreateRatingDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
@@ -456,9 +375,6 @@ namespace Quaver.Shared.Screens.Gameplay
             };
         }
 
-        /// <summary>
-        ///     Creates the accuracy display sprite.
-        /// </summary>
         private void CreateAccuracyDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
@@ -473,12 +389,8 @@ namespace Quaver.Shared.Screens.Gameplay
             };
         }
 
-        /// <summary>
-        ///     Updates the values and positions of the score and accuracy displays.
-        /// </summary>
         public void UpdateScoreAndAccuracyDisplays()
         {
-            // Update score and accuracy displays
             ScoreDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Score);
 
             RatingDisplay.UpdateValue(RatingProcessor.CalculateRating(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy));
@@ -488,14 +400,10 @@ namespace Quaver.Shared.Screens.Gameplay
                 AccuracyDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Accuracy);
         }
 
-        /// <summary>
-        ///     Creates the display for KPS
-        /// </summary>
         private void CreateKeysPerSecondDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
 
-            // Create KPS display
             KpsDisplay = new KeysPerSecond(NumberDisplayType.Score, "0", new Vector2(skin.KpsDisplayScale / 100f, skin.KpsDisplayScale / 100f))
             {
                 Parent = Container,
@@ -505,9 +413,6 @@ namespace Quaver.Shared.Screens.Gameplay
             };
         }
 
-        /// <summary>
-        ///     Creates the GradeDisplay sprite
-        /// </summary>
         private void CreateGradeDisplay() => GradeDisplay = new GradeDisplay(Screen)
         {
             Parent = Container,
@@ -516,12 +421,8 @@ namespace Quaver.Shared.Screens.Gameplay
             Y = AccuracyDisplay.Y
         };
 
-        /// <summary>
-        ///     Creates the scoreboard for the game.
-        /// </summary>
         private void CreateScoreboards()
         {
-            // Use the replay's name for the scoreboard if we're watching one.
             var scoreboardName = Screen.InReplayMode ? Screen.LoadedReplay.PlayerName : ConfigManager.Username.Value;
 
             var selfAvatar = ConfigManager.Username.Value == scoreboardName ? SteamManager.GetAvatarOrUnknown(SteamUser.GetSteamID().m_SteamID)
@@ -538,7 +439,6 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team)
             {
-                // Blue Team
                 ScoreboardRight = new Scoreboard(ScoreboardType.Teams,
                     OnlineManager.GetTeam(OnlineManager.Self.OnlineUser.Id) == MultiplayerTeam.Blue ? users : new List<ScoreboardUser>(), MultiplayerTeam.Blue)
                 {
@@ -552,7 +452,6 @@ namespace Quaver.Shared.Screens.Gameplay
                                 ? ScoreboardType.Teams
                                 : ScoreboardType.FreeForAll;
 
-            // Red team/normal leaderboard
             ScoreboardLeft = new Scoreboard(scoreboardType,
                 OnlineManager.CurrentGame == null || OnlineManager.GetTeam(OnlineManager.Self.OnlineUser.Id) == MultiplayerTeam.Red ?
                     users : new List<ScoreboardUser>())
@@ -562,18 +461,12 @@ namespace Quaver.Shared.Screens.Gameplay
             ScoreboardRight?.Users.ForEach(x => x.SetImage());
         }
 
-        /// <summary>
-        ///     Updates the scoreboard for all the current users.
-        /// </summary>
         public void UpdateScoreboardUsers()
         {
             ScoreboardLeft?.CalculateScores();
             ScoreboardRight?.CalculateScores();
         }
 
-        /// <summary>
-        ///     Checks if there are new scoreboard users.
-        /// </summary>
         private void CheckIfNewScoreboardUsers()
         {
             if (Screen.IsPlayTesting || StopCheckingForScoreboardUsers)
@@ -593,7 +486,6 @@ namespace Quaver.Shared.Screens.Gameplay
 
                 ScoreboardUser user;
 
-                // Hide unbeatable scores if the user specified it
                 if (OnlineManager.CurrentGame == null &&
                     !ConfigManager.DisplayUnbeatableScoresDuringGameplay.Value && mapScores[i].PerformanceRating > maxRating)
                     continue;
@@ -601,13 +493,11 @@ namespace Quaver.Shared.Screens.Gameplay
                 if (OnlineManager.CurrentGame == null && mapScores[i].Grade == Grade.None)
                     continue;
 
-                // For online scores we want to just give them their score in the processor,
-                // since we don't have access to their judgement breakdown.
                 if (mapScores[i].IsOnline)
                 {
                     var judgements = mapScores[i].OnlineJudgements;
 
-                    if (/* !ConfigManager.EnableRealtimeOnlineScoreboard.Value || */ judgements == null || !OnlineManager.IsDonator)
+                    if (judgements == null || !OnlineManager.IsDonator)
                         judgements = new List<Judgement>();
 
                     user = new ScoreboardUser(Screen, ScoreboardUserType.Other, $"{mapScores[i].Name}",
@@ -644,15 +534,12 @@ namespace Quaver.Shared.Screens.Gameplay
                         user.Combo.Text = $"{processor.MaxCombo}x";
                     }
                 }
-                // Allow the user to play against their own local scores.
                 else
                 {
-                    // Decompress score
                     var breakdownHits = GzipHelper.Decompress(mapScores[i].JudgementBreakdown);
 
                     var judgements = new List<Judgement>();
 
-                    // Get all of the hit stats for the score.
                     foreach (var hit in breakdownHits)
                         judgements.Add((Judgement)int.Parse(hit.ToString()));
 
@@ -675,7 +562,6 @@ namespace Quaver.Shared.Screens.Gameplay
 
                     user.SetImage();
 
-                    // Make sure the user's score is updated with the current user.
                     for (var j = 0; j < Screen.Ruleset.ScoreProcessor.TotalJudgementCount && i < judgements.Count; j++)
                     {
                         var processor = user.Processor as ScoreProcessorKeys;
@@ -697,8 +583,6 @@ namespace Quaver.Shared.Screens.Gameplay
             ScoreboardLeft.SetTargetYPositions();
             ScoreboardRight?.SetTargetYPositions();
 
-            // Re-change the transitioner and pause screen's parent so that they appear on top of the scoreboard
-            // again.
             if (ProgressBar != null)
                 ProgressBar.Parent = Container;
 
@@ -711,10 +595,6 @@ namespace Quaver.Shared.Screens.Gameplay
             Screen.SetRichPresence();
         }
 
-        /// <summary>
-        ///     Starts the fade out process for the game on play completion.
-        /// </summary>
-        /// <param name="gameTime"></param>
         private void HandlePlayCompletion(GameTime gameTime)
         {
             if (!Screen.Failed && !Screen.IsPlayComplete || Screen.IsSongSelectPreview || Screen is TournamentGameplayScreen)
@@ -739,8 +619,6 @@ namespace Quaver.Shared.Screens.Gameplay
                 return;
             }
 
-            // If the play was a failure, we want to immediately show
-            // a red screen.
             if (Screen.Failed && !ScreenChangedToRedOnFailure)
             {
                 var tint = Screen.HasQuit ? Color.Black : Color.Red;
@@ -756,11 +634,8 @@ namespace Quaver.Shared.Screens.Gameplay
             {
                 Screen.TimePlayEnd = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-                // Force all replay frames on failure
                 if (OnlineManager.IsBeingSpectated)
                 {
-                    // Send replay frames
-                    // FinishedSong frame as well unless we are the spectator
                     Screen.SendReplayFramesToServer(true, !OnlineManager.IsSpectatingSomeone);
                 }
 
@@ -788,7 +663,6 @@ namespace Quaver.Shared.Screens.Gameplay
                     return;
                 }
 
-                // In a multiplayer match
                 if (OnlineManager.CurrentGame != null)
                 {
                     try
@@ -801,7 +675,6 @@ namespace Quaver.Shared.Screens.Gameplay
                     }
                     catch (Exception e)
                     {
-                        // ignored
                     }
 
                     return;
@@ -829,21 +702,16 @@ namespace Quaver.Shared.Screens.Gameplay
                 ResultsScreenLoadInitiated = true;
             }
 
-            // Don't fade unless we're fully clear to do so.
             if (Screen.TimeSincePlayEnded <= 1200 || !ClearToExitScreen)
                 return;
 
-            // If the play was a failure, immediately start fading to black.
             if (Screen.Failed)
                 Transitioner.FadeToColor(Color.Black, gameTime.ElapsedGameTime.TotalMilliseconds, 150);
 
-            // Start fading out the screen.
             if (!FadingOnPlayCompletion)
             {
                 Transitioner.Animations.Clear();
 
-                // Get the initial alpha of the sceen transitioner, because it can be different based
-                // on if the user failed or not, and use this in the Animation
                 var initialAlpha = Screen.Failed ? 0.65f : 0;
 
                 Transitioner.Animations.Add(new Animation(AnimationProperty.Alpha, Easing.Linear, initialAlpha, 1, 1000));
@@ -852,14 +720,10 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (Screen.TimeSincePlayEnded >= 3000)
             {
-                // Change background dim before switching screens.
                 BackgroundManager.Background.Dim = 0;
             }
         }
 
-        /// <summary>
-        /// Update the position and size of the grade display.
-        /// </summary>
         public void UpdateGradeDisplay()
         {
             GradeDisplay.X = AccuracyDisplay.X - AccuracyDisplay.Width - 8;
@@ -867,12 +731,6 @@ namespace Quaver.Shared.Screens.Gameplay
             GradeDisplay.UpdateWidth();
         }
 
-        /// <summary>
-        ///     When a background is loaded in the gameplay screen (because multi-threading....),
-        ///     we'll want to fade it in to the user's set dim.
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
         private void OnBackgroundLoaded(object sender, BackgroundLoadedEventArgs e)
         {
             if (e.Map != MapManager.Selected.Value)
@@ -891,10 +749,6 @@ namespace Quaver.Shared.Screens.Gameplay
             BackgroundManager.Background.BrightnessSprite.Animations.Add(t);
         }
 
-        /// <summary>
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
         private void OnGameEnded(object sender, GameEndedEventArgs e)
         {
             var manager = (HitObjectManagerKeys)Screen.Ruleset.HitObjectManager;
@@ -904,7 +758,6 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (Screen is TournamentGameplayScreen)
             {
-                // Only exit once (multiple GameplayScreenViews), and force end (!mp end or lobby disbanded)
                 if (!Screen.Exiting && e.Force)
                     Screen.Exit(() => new MultiplayerGameScreen());
                 return;
@@ -953,8 +806,6 @@ namespace Quaver.Shared.Screens.Gameplay
             return processors;
         }
 
-        /// <summary>
-        /// </summary>
         private void HandleWaitingForPlayersDialog()
         {
             if (MultiplayerEndTime == null)
