@@ -1707,7 +1707,7 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             // WHITE  = Code started running
             // ORANGE = FOLDER ERROR (Check quaver.cfg SongDirectory)
             // PURPLE = FILE ERROR (Check if images are named frame0.jpg, frame1.jpg...)
-            // RED    = CRASH (File permissions or other error)
+            // RED    = CRASH (File permissions/other error)
             // GREEN  = SUCCESS (Video is rendering)
 
             var debugColor = Color.White;
