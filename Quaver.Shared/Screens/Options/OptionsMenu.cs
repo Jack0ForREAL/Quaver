@@ -178,6 +178,32 @@ namespace Quaver.Shared.Screens.Options
                 }),
                 new OptionsSection("Gameplay", UserInterface.OptionsGameplay, new List<OptionsSubcategory>
                 {
+                // --- NEW VIDEO MOD SETTINGS ---
+                    new OptionsSubcategory("Video Backgrounds (Mod)", new List<OptionsItem>()
+                    {
+                        new OptionsItemCheckbox(containerRect, "Enable Video Backgrounds", ConfigManager.VideoModEnabled),
+                        
+                        new OptionsItemCheckbox(containerRect, "Auto-Configure Performance", ConfigManager.VideoModAutoConfiguration)
+                        {
+                            Tags = new List<string> {"cpu", "ram", "automatic", "optimize"}
+                        },
+                        
+                        new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i} MB")
+                        {
+                            Tags = new List<string> {"memory", "buffer", "cache"}
+                        },
+                        
+                        new OptionsSlider(containerRect, "Decoder Threads", ConfigManager.VideoModDecoderThreads, i => $"{i} Threads")
+                        {
+                            Tags = new List<string> {"cpu", "cores", "multithreading", "lag"}
+                        },
+                        
+                        new OptionsSlider(containerRect, "Preload Buffer", ConfigManager.VideoModPreloadSeconds, i => $"{i} Seconds")
+                        {
+                            Tags = new List<string> {"lookahead", "buffer", "loading"}
+                        }
+                    }),
+                    
                     new OptionsSubcategory("Background", new List<OptionsItem>()
                     {
                         new OptionsSlider(containerRect, "Background Brightness", ConfigManager.BackgroundBrightness),
