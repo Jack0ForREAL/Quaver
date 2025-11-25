@@ -1763,7 +1763,7 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                 debugColor = Color.Red; // CRASHED
             }
 
-            // 4. Draw the Debug Square (Top Left)
+            // 4. Draw the Debug Square
             try 
             {
                 var device = GameBase.Game.GraphicsDevice;
