@@ -782,6 +782,32 @@ namespace Quaver.Shared.Config
         ///     Keybinding for selection in navigation interface.
         /// </summary>
         internal static Bindable<Keys> KeyNavigateSelect { get; private set; }
+        /// <summary>
+        ///     Video Mod: Enable or Disable video backgrounds entirely.
+        /// </summary>
+        internal static Bindable<bool> VideoModEnabled { get; private set; }
+
+        /// <summary>
+        ///     Video Mod: If true, ignores custom settings and calculates best values based on CPU core count.
+        /// </summary>
+        internal static Bindable<bool> VideoModAutoConfiguration { get; private set; }
+
+        /// <summary>
+        ///     Video Mod: Maximum RAM (in Megabytes) to use for buffering frames. 
+        ///     Higher = Smoother playback but uses more system memory.
+        /// </summary>
+        internal static BindableInt VideoModRamBudget { get; private set; }
+
+        /// <summary>
+        ///     Video Mod: How many CPU threads to use for decoding JPGs.
+        ///     Higher = Faster loading, but might stutter gameplay if too high.
+        /// </summary>
+        internal static BindableInt VideoModDecoderThreads { get; private set; }
+
+        /// <summary>
+        ///     Video Mod: How many seconds ahead to look.
+        /// </summary>
+        internal static BindableInt VideoModPreloadSeconds { get; private set; }
 
         [IgnoreWrite]
         internal static Dictionary<GameMode, List<Bindable<GenericKey>>> KeyLayouts { get; private set; }
@@ -1191,6 +1217,17 @@ namespace Quaver.Shared.Config
             ResultGraph = ReadValue(@"ResultGraph", ResultGraphs.Deviance, data);
             AudioOutputDevice = ReadValue(@"AudioOutputDevice", "Default", data);
             PrioritizedGameMode = ReadValue(@"PrioritizedGameMode", (GameMode)0, data);
+            
+            // --- VIDEO MOD SETTINGS ---
+            VideoModEnabled = ReadValue(@"VideoModEnabled", true, data);
+            VideoModAutoConfiguration = ReadValue(@"VideoModAutoConfiguration", true, data);
+            // Default: 1024MB (1GB) RAM, Min: 256MB, Max: 8192MB (8GB)
+            VideoModRamBudget = ReadInt(@"VideoModRamBudget", 1024, 256, 8192, data);
+            // Default: 2 Threads, Min: 1, Max: 16
+            VideoModDecoderThreads = ReadInt(@"VideoModDecoderThreads", 2, 1, 16, data);
+            // Default: 3 Seconds ahead, Min: 1, Max: 30
+            VideoModPreloadSeconds = ReadInt(@"VideoModPreloadSeconds", 3, 1, 30, data);
+            // --------------------------
 
             KeyLayouts = new();
             CoopKeyLayouts = new();
