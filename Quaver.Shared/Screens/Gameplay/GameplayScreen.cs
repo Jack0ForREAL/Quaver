@@ -1703,28 +1703,44 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
         public override void Draw(GameTime gameTime)
         {
-            // 1. VIDEO DRAWING (Layer 0 - Bottom)
+            // Debug Color Codes:
+            // WHITE  = Code started running
+            // ORANGE = Cannot find the "video" folder
+            // PURPLE = Cannot find the specific "frameX.jpg" file
+            // RED    = Crash / Error
+            // GREEN  = Success (Video should be visible)
+            
+            var debugColor = Color.White;
+
             try
             {
-                // We use MapManager to get the folder because the 'Map' object usually holds relative paths
                 var currentMap = MapManager.Selected.Value;
                 
                 if (currentMap != null)
                 {
-                    // Construct the full path: Songs Folder + Map Directory + "video"
+                    // 1. Get Path
                     var songsFolder = ConfigManager.SongDirectory.Value;
                     var mapFolder = currentMap.Directory;
                     var videoPath = Path.Combine(songsFolder, mapFolder, "video");
 
-                    if (Directory.Exists(videoPath) && AudioEngine.Track != null && !AudioEngine.Track.IsDisposed)
+                    if (!Directory.Exists(videoPath))
                     {
-                        // Calculate frame. 33.33ms = 30 FPS. Use 16.66 for 60 FPS.
+                        debugColor = Color.Orange; // FOLDER NOT FOUND
+                    }
+                    else
+                    {
+                        // 2. Calculate Frame
                         var currentTime = AudioEngine.Track.Time;
                         var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
                         var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
-                        if (File.Exists(frameFile))
+                        if (!File.Exists(frameFile))
                         {
+                            debugColor = Color.Purple; // FILE NOT FOUND (Checked: frameX.jpg)
+                        }
+                        else
+                        {
+                            // 3. Draw Video
                             using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                             {
                                 var device = GameBase.Game.GraphicsDevice;
@@ -1732,23 +1748,32 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                                 var spriteBatch = GameBase.Game.SpriteBatch;
 
                                 spriteBatch.Begin();
-                                // Draw video stretched to 1920x1080
                                 spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
                                 spriteBatch.End();
 
                                 videoFrame.Dispose();
+                                debugColor = Color.Green; // SUCCESS
                             }
                         }
                     }
                 }
             }
-            catch
+            catch (Exception)
             {
-                // If anything fails (file busy, track disposed), just ignore it and draw the game
+                debugColor = Color.Red; // CRASHED
             }
 
-            // 2. GAME DRAWING (Layer 1 - Top)
+            // 4. Draw the Debug Square (Top Left)
+            // Uses a default white pixel texture that always exists in Wobble
+            try 
+            {
+                var spriteBatch = GameBase.Game.SpriteBatch;
+                spriteBatch.Begin();
+                spriteBatch.Draw(Wobble.Managers.TextureManager.WhitePixel, new Rectangle(0, 0, 100, 100), debugColor);
+                spriteBatch.End();
+            }
+            catch {}
+
+            // 5. Draw Game
             base.Draw(gameTime);
         }
-    }
-}
