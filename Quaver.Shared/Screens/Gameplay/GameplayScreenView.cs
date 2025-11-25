@@ -51,6 +51,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Color = Microsoft.Xna.Framework.Color; // Resolve conflict with ImageSharp Color
+using Rectangle = Microsoft.Xna.Framework.Rectangle; // Resolve conflict with ImageSharp Rectangle
 
 namespace Quaver.Shared.Screens.Gameplay
 {
