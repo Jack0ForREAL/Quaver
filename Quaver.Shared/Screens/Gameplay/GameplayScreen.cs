@@ -63,6 +63,7 @@ using System.IO;
 using Microsoft.Xna.Framework.Graphics;
 using Quaver.Shared.Audio;
 
+
 namespace Quaver.Shared.Screens.Gameplay
 {
     public class GameplayScreen : QuaverScreen
@@ -1699,38 +1700,39 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             NotificationManager.Show(NotificationLevel.Info,
                 $"Gameplay overlay is now {on}. Press Shift+F6 to toggle the display.", null, true);
         }
-
+        
         public override void Draw(GameTime gameTime)
         {
             // 1. VIDEO DRAWING (Layer 0 - Bottom)
             try
             {
-                // Look for "video" folder in the current map directory
-                // We use Map.Directory safely here
-                var videoPath = Path.Combine(Map.Directory, "video");
+                // FIX: Use Path.GetDirectoryName(Map.FilePath) because Map.Directory doesn't exist directly
+                var mapDirectory = Path.GetDirectoryName(Map.FilePath);
+                var videoPath = Path.Combine(mapDirectory, "video");
 
                 if (Directory.Exists(videoPath))
                 {
-                    // Calculate frame based on song time (30 FPS = 33ms. Change 33f to 16.6f for 60fps)
-                    // We use Math.Max(0) to prevent crashing at the start of song
-                    var frameIndex = (int)(Math.Max(0, AudioEngine.Time) / 33f);
+                    // FIX: Use AudioEngine.Source.Time.TotalMilliseconds
+                    // 33.33f is for 30 FPS. Change to 16.66f for 60 FPS video.
+                    var currentTime = AudioEngine.Source.Time.TotalMilliseconds;
+                    var frameIndex = (int)(Math.Max(0, currentTime) / 33.33f);
+                    
                     var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
                     if (File.Exists(frameFile))
                     {
-                        // Load texture raw from disk
                         using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                         {
-                            var device = QuaverScreenManager.Game.GraphicsDevice;
+                            // FIX: Use GameBase.Game to get the graphics device
+                            var device = GameBase.Game.GraphicsDevice;
                             var videoFrame = Texture2D.FromStream(device, stream);
-                            var spriteBatch = QuaverScreenManager.Game.SpriteBatch;
+                            var spriteBatch = GameBase.Game.SpriteBatch;
 
-                            // Draw the video to fill the screen (1920x1080)
                             spriteBatch.Begin();
+                            // Stretch to 1920x1080
                             spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
                             spriteBatch.End();
 
-                            // Delete texture from RAM immediately to prevent memory leaks
                             videoFrame.Dispose();
                         }
                     }
@@ -1738,11 +1740,11 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             }
             catch
             {
-                // Silent fail (don't crash game if image is busy or missing)
+                // Silent fail to prevent crashing
             }
 
             // 2. GAME DRAWING (Layer 1 - Top)
             base.Draw(gameTime);
         }
-    } // <--- Closes GameplayScreen Class
-} // <--- Closes Namespace
+    }
+}
