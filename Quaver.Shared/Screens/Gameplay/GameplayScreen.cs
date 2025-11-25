@@ -1703,32 +1703,42 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
         public override void Draw(GameTime gameTime)
         {
-            // 1. VIDEO RENDERING (Layer 0 - Background)
+            // 1. Draw the Game normally first
+            base.Draw(gameTime);
+
+            // 2. Try to Draw Video ON TOP (Layer 999)
             try
             {
                 var currentMap = MapManager.Selected.Value;
+                
+                // Only run if map is loaded
                 if (currentMap != null)
                 {
-                    // Setup Paths
-                    // Note: If you are running from Steam folder, we don't need absolute paths, relative might work too.
-                    // But we stick to the Config path as it works for the lag.
                     var songsFolder = ConfigManager.SongDirectory.Value;
                     var mapFolder = currentMap.Directory;
                     var videoPath = Path.Combine(songsFolder, mapFolder, "video");
-                    
                     var currentTime = AudioEngine.Track.Time;
+                    
+                    // Calculate Frame (30 FPS)
                     var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
                     var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
-                    // --- LOGGING (To Steam Folder) ---
-                    if (frameIndex % 60 == 0) {
-                         var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "video_log.txt");
-                         var msg = $"[Time: {currentTime}] Reading: {frameFile}";
-                         try { File.AppendAllText(logPath, msg + Environment.NewLine); } catch {}
-                    }
-                    // --------------------------------
+                    // --- LOGGING: Writes to Quaver/Logs/video_debug.txt ---
+                    if (frameIndex % 60 == 0) 
+                    {
+                        var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "video_debug.txt");
+                        var msg = $"[Time: {currentTime:F0}] Path: {frameFile}";
 
-                    if (Directory.Exists(videoPath) && File.Exists(frameFile))
+                        if (!Directory.Exists(videoPath)) msg += " [ERROR: Folder missing]";
+                        else if (!File.Exists(frameFile)) msg += " [ERROR: Image missing]";
+                        else msg += " [OK: Found]";
+
+                        try { File.AppendAllText(logPath, msg + Environment.NewLine); } catch {}
+                    }
+                    // ------------------------------------------------------
+
+                    // Check if file exists before trying to draw
+                    if (File.Exists(frameFile))
                     {
                         using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                         {
@@ -1736,31 +1746,29 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                             var videoFrame = Texture2D.FromStream(device, stream);
                             var spriteBatch = GameBase.Game.SpriteBatch;
 
-                            // FORCE DIM TO 0 so the black box doesn't cover our video
-                            var oldDim = ConfigManager.BackgroundDim.Value;
-                            ConfigManager.BackgroundDim.Value = 0;
-
-                            spriteBatch.Begin();
+                            // Force a fresh render batch on top of everything
+                            spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.AlphaBlend);
                             
-                            // Draw Full Screen (Dynamic Size)
-                            int width = GameBase.Game.GraphicsDevice.Viewport.Width;
-                            int height = GameBase.Game.GraphicsDevice.Viewport.Height;
+                            // Draw Full Screen
+                            int w = device.Viewport.Width;
+                            int h = device.Viewport.Height;
+                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, w, h), Color.White);
                             
-                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, width, height), Color.White);
                             spriteBatch.End();
-
-                            // Restore Dim (Optional, but keeps settings clean)
-                            // ConfigManager.BackgroundDim.Value = oldDim; 
 
                             videoFrame.Dispose();
                         }
                     }
                 }
             }
-            catch {}
-
-            // 2. Draw Game Elements (Notes, UI) ON TOP
-            base.Draw(gameTime);
+            catch (Exception e)
+            {
+                // Log crashes too
+                try {
+                    var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "video_debug.txt");
+                    File.AppendAllText(logPath, "CRASH: " + e.Message + Environment.NewLine); 
+                } catch {}
+            }
         }
     }
 }
