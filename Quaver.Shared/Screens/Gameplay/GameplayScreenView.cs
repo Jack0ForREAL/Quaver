@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Quaver.API.Enums;
@@ -79,10 +82,17 @@ namespace Quaver.Shared.Screens.Gameplay
         private ReplayController ReplayController { get; }
 
         // --- VIDEO MOD VARIABLES ---
-        private Texture2D VideoTexture;
-        private int LastVideoFrameIndex = -1;
-        private SpriteBatch VideoBatch; // Dedicated batch for performance
-        private string CachedVideoPath = null; // Cache path to avoid string joining every frame
+        // Thread-Safe Buffer to hold prepared textures
+        private class VideoFrame
+        {
+            public int Index;
+            public Texture2D Texture;
+        }
+        private ConcurrentDictionary<int, VideoFrame> VideoBuffer = new ConcurrentDictionary<int, VideoFrame>();
+        private CancellationTokenSource LoaderCanceller = new CancellationTokenSource();
+        private SpriteBatch VideoBatch;
+        private Texture2D CurrentDisplayFrame;
+        private int CurrentDisplayIndex = -1;
         // ---------------------------
 
         public GameplayScreenView(Screen screen) : base(screen)
@@ -94,8 +104,10 @@ namespace Quaver.Shared.Screens.Gameplay
 
             CreateBackground();
 
-            // Init Video Batcher
+            // Init Video Batch
             VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
+            // Start the Background Loader
+            Task.Run(() => RunVideoLoader(LoaderCanceller.Token));
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
                                                   && ConfigManager.EnableBattleRoyaleBackgroundFlashing.Value)
@@ -200,6 +212,91 @@ namespace Quaver.Shared.Screens.Gameplay
                 OnlineManager.Client.OnGameEnded += OnGameEnded;
         }
 
+        // --- BACKGROUND THREAD: LOADS FRAMES INTO RAM ---
+        private void RunVideoLoader(CancellationToken token)
+        {
+            try 
+            {
+                var currentMap = MapManager.Selected.Value;
+                if (currentMap == null) return;
+
+                var songsFolder = ConfigManager.SongDirectory.Value;
+                var mapFolder = currentMap.Directory;
+                var videoPath = Path.Combine(songsFolder, mapFolder, "video");
+
+                if (!Directory.Exists(videoPath)) return;
+
+                while (!token.IsCancellationRequested)
+                {
+                    // 1. Get Game Time (Safe access)
+                    // If AudioTrack is null/disposed, just wait
+                    if (AudioEngine.Track == null || AudioEngine.Track.IsDisposed)
+                    {
+                        Thread.Sleep(100);
+                        continue;
+                    }
+
+                    var time = AudioEngine.Track.Time;
+                    int startFrame = (int)(Math.Max(0, time) / 33.333f);
+                    int endFrame = startFrame + 30; // Look ahead 1 second (30 frames)
+
+                    // 2. Load needed frames
+                    for (int i = startFrame; i < endFrame; i++)
+                    {
+                        if (token.IsCancellationRequested) break;
+                        if (VideoBuffer.ContainsKey(i)) continue; // Already loaded
+
+                        var file = Path.Combine(videoPath, $"frame{i}.jpg");
+                        if (File.Exists(file))
+                        {
+                            try 
+                            {
+                                // We use a FileStream to load bytes, then create texture
+                                // Note: Creating Texture2D usually requires main thread in some engines,
+                                // but FNA often allows it if GraphicsDevice is thread-safe.
+                                // If this throws, we have to move 'Texture2D.FromStream' to Draw().
+                                using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
+                                {
+                                    var tex = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
+                                    VideoBuffer.TryAdd(i, new VideoFrame { Index = i, Texture = tex });
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    // 3. Cleanup old frames (save RAM)
+                    var keys = VideoBuffer.Keys.ToList();
+                    foreach(var k in keys)
+                    {
+                        if (k < startFrame - 10) // Keep a small buffer behind just in case
+                        {
+                            if (VideoBuffer.TryRemove(k, out var oldFrame))
+                            {
+                                oldFrame.Texture?.Dispose();
+                            }
+                        }
+                    }
+
+                    // Sleep a tiny bit to not kill CPU
+                    Thread.Sleep(5);
+                }
+            }
+            catch (Exception e)
+            {
+                LogVideoError("Loader Crash: " + e.Message);
+            }
+        }
+
+        private void LogVideoError(string msg)
+        {
+            try {
+                var logPath = Path.Combine(ConfigManager.LogsDirectory.Value, "video_mod.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now}] {msg}{Environment.NewLine}");
+            } catch {}
+        }
+        // ----------------------------------------------
+
         public override void Update(GameTime gameTime)
         {
             HandleWaitingForPlayersDialog();
@@ -222,86 +319,65 @@ namespace Quaver.Shared.Screens.Gameplay
         {
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
 
-            // 1. Draw Video First (Optimized)
-            // We intentionally use a "return bool" to decide if we should draw the normal background
-            // This prevents background flickering if the video isn't ready yet
-            bool videoDrawn = DrawVideoLayer();
-
+            // --- DRAW VIDEO (Uses Buffered Texture) ---
+            bool videoDrawn = DrawBufferedVideo();
+            
             if (!videoDrawn)
-            {
                 Background.Draw(gameTime);
-            }
+            // ------------------------------------------
 
-            // 2. Draw Game UI/Notes on top
             BattleRoyaleBackgroundAlerter?.Draw(gameTime);
             Screen.Ruleset?.Draw(gameTime);
             Container?.Draw(gameTime);
         }
 
-        // --- OPTIMIZED VIDEO LOGIC ---
-        private bool DrawVideoLayer()
+        private bool DrawBufferedVideo()
         {
             try
             {
-                var currentMap = MapManager.Selected.Value;
-                if (currentMap == null) return false;
-
-                // Optimization: Cache path on first run so we don't combine strings 144 times/sec
-                if (CachedVideoPath == null)
-                {
-                    CachedVideoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, "video");
-                }
-
-                if (!Directory.Exists(CachedVideoPath)) return false;
-
                 var currentTime = AudioEngine.Track.Time;
-                
-                // Use 33.33f for 30FPS. Use 16.66f for 60FPS videos.
                 var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
 
-                if (frameIndex != LastVideoFrameIndex)
-                {
-                    var frameFile = Path.Combine(CachedVideoPath, $"frame{frameIndex}.jpg");
-                    
-                    if (File.Exists(frameFile))
-                    {
-                        // Clean up old frame from memory
-                        if (VideoTexture != null) VideoTexture.Dispose();
+                // Try to get frame from buffer
+                Texture2D texToDraw = null;
 
-                        // Load new frame directly into GPU memory
-                        using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
-                        {
-                            VideoTexture = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
-                        }
-                    }
-                    LastVideoFrameIndex = frameIndex;
-                }
+                // 1. Try exact frame
+                if (VideoBuffer.TryGetValue(frameIndex, out var exact))
+                    texToDraw = exact.Texture;
+                // 2. If missing (buffering lag), try previous frame
+                else if (VideoBuffer.TryGetValue(frameIndex - 1, out var prev))
+                    texToDraw = prev.Texture;
+                // 3. Fallback to whatever we displayed last
+                else
+                    texToDraw = CurrentDisplayFrame;
 
-                // Draw (Fast, reused batch)
-                if (VideoTexture != null && !VideoTexture.IsDisposed)
+                if (texToDraw != null && !texToDraw.IsDisposed)
                 {
-                    // We do NOT use "using" here because VideoBatch is reused across frames
-                    VideoBatch.Begin(); 
+                    CurrentDisplayFrame = texToDraw;
+                    CurrentDisplayIndex = frameIndex;
+
+                    VideoBatch.Begin();
                     int w = GameBase.Game.GraphicsDevice.Viewport.Width;
                     int h = GameBase.Game.GraphicsDevice.Viewport.Height;
-                    VideoBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
+                    VideoBatch.Draw(texToDraw, new Rectangle(0, 0, w, h), Color.White);
                     VideoBatch.End();
-                    
                     return true;
                 }
             }
-            catch 
-            {
-                // Ignore errors
-            }
+            catch { }
             return false;
         }
-        // -----------------------
 
         public override void Destroy()
         {
-            // Dispose resources to free memory
-            if (VideoTexture != null) VideoTexture.Dispose();
+            // Stop Loader
+            LoaderCanceller.Cancel();
+            
+            // Cleanup Buffer
+            foreach(var kvp in VideoBuffer)
+                kvp.Value.Texture?.Dispose();
+            VideoBuffer.Clear();
+
             if (VideoBatch != null) VideoBatch.Dispose();
 
             if (OnlineManager.Client != null)
