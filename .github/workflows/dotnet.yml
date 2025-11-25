@@ -12,11 +12,14 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        submodules: false # We will handle submodules manually to skip the broken one
+        submodules: false # Don't let GitHub try to do it automatically
 
-    - name: Checkout submodules (Skip Private Server)
-      # This magical line skips the broken component that caused the error
-      run: git -c submodule."Quaver.Server.Client".update=none submodule update --init --recursive
+    - name: Manual Submodule Setup
+      # This initializes git, tells it to IGNORE the private server folder, then downloads the rest
+      run: |
+        git submodule init
+        git config submodule.Quaver.Server.Client.update none
+        git submodule update --recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
@@ -24,14 +27,13 @@ jobs:
         dotnet-version: 6.0.x
 
     - name: Restore dependencies
-      run: dotnet restore
+      # We target the PROJECT, not the SOLUTION, to avoid looking for missing files
+      run: dotnet restore Quaver/Quaver.csproj
 
     - name: Build and Publish
-      # Compiles the game into a folder called "QuaverMod"
       run: dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
 
     - name: Upload Game Artifact
-      # Zips up that folder and lets you download it
       uses: actions/upload-artifact@v4
       with:
         name: Quaver-Video-Mod
