@@ -85,20 +85,19 @@ namespace Quaver.Shared.Screens.Gameplay
         private class VideoFrame
         {
             public int Index;
-            public byte[] RawData; // Loaded in Background
-            public Texture2D Texture; // Created in Main Thread
-            public bool IsReady => Texture != null && !Texture.IsDisposed;
+            public byte[] RawData; // RAM (Background Thread)
+            public Texture2D Texture; // VRAM (Main Thread)
         }
 
-        // Buffer limits
-        private const int LOOKAHEAD_FRAMES = 300; // Load 10 seconds ahead
-        private const int MAX_UPLOADS_PER_FRAME = 2; // Only create 2 textures per frame to avoid lag spikes
-
+        // Configuration
+        private const int DISK_LOOKAHEAD = 100; // Keep 3 seconds of raw bytes in RAM
+        private const int GPU_LOOKAHEAD = 5;    // Only keep 5 textures in VRAM to prevent lag
+        
         private ConcurrentDictionary<int, VideoFrame> VideoBuffer = new ConcurrentDictionary<int, VideoFrame>();
+        private ConcurrentQueue<Texture2D> GarbageTextures = new ConcurrentQueue<Texture2D>();
         private CancellationTokenSource LoaderCanceller = new CancellationTokenSource();
         private SpriteBatch VideoBatch;
         private Texture2D CurrentDisplayFrame;
-        private int LastFrameIndex = -1;
         // ---------------------------
 
         public GameplayScreenView(Screen screen) : base(screen)
@@ -113,7 +112,7 @@ namespace Quaver.Shared.Screens.Gameplay
             // Init Video Batch
             VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
             
-            // Start the Background Loader (File Reader)
+            // Start the Background Loader
             Task.Run(() => RunVideoLoader(LoaderCanceller.Token));
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
@@ -219,7 +218,7 @@ namespace Quaver.Shared.Screens.Gameplay
                 OnlineManager.Client.OnGameEnded += OnGameEnded;
         }
 
-        // --- BACKGROUND THREAD: READS DISK ONLY ---
+        // --- BACKGROUND THREAD: DISK IO ONLY ---
         private void RunVideoLoader(CancellationToken token)
         {
             try 
@@ -235,7 +234,6 @@ namespace Quaver.Shared.Screens.Gameplay
 
                 while (!token.IsCancellationRequested)
                 {
-                    // Access audio time safely
                     if (AudioEngine.Track == null || AudioEngine.Track.IsDisposed)
                     {
                         Thread.Sleep(50);
@@ -244,14 +242,13 @@ namespace Quaver.Shared.Screens.Gameplay
 
                     var time = AudioEngine.Track.Time;
                     int startFrame = (int)(Math.Max(0, time) / 33.333f);
-                    int endFrame = startFrame + LOOKAHEAD_FRAMES; 
+                    int endFrame = startFrame + DISK_LOOKAHEAD; 
 
-                    // Load bytes into RAM
+                    // 1. Load Bytes for future frames
                     for (int i = startFrame; i < endFrame; i++)
                     {
                         if (token.IsCancellationRequested) break;
                         
-                        // If we don't have this frame in the dictionary at all
                         if (!VideoBuffer.ContainsKey(i))
                         {
                             var file = Path.Combine(videoPath, $"frame{i}.jpg");
@@ -259,7 +256,6 @@ namespace Quaver.Shared.Screens.Gameplay
                             {
                                 try 
                                 {
-                                    // READ BYTES ONLY - Thread safe!
                                     byte[] data = File.ReadAllBytes(file);
                                     VideoBuffer.TryAdd(i, new VideoFrame { Index = i, RawData = data });
                                 }
@@ -268,24 +264,24 @@ namespace Quaver.Shared.Screens.Gameplay
                         }
                     }
 
-                    // Cleanup very old frames to save RAM
-                    // Keep previous 2 seconds (60 frames) just in case
+                    // 2. Remove old frames from buffer
                     var keys = VideoBuffer.Keys.ToList();
                     foreach(var k in keys)
                     {
-                        if (k < startFrame - 60)
+                        if (k < startFrame - 10) // Keep a tiny buffer behind
                         {
                             if (VideoBuffer.TryRemove(k, out var oldFrame))
                             {
-                                // We cannot dispose the Texture here because we are on background thread.
-                                // We rely on the GC or Main Thread cleanup later, but for now just drop reference.
+                                // If there was a texture created, queue it for MainThread disposal
+                                if (oldFrame.Texture != null)
+                                    GarbageTextures.Enqueue(oldFrame.Texture);
+
                                 oldFrame.RawData = null;
                             }
                         }
                     }
 
-                    // Sleep to let CPU breathe
-                    Thread.Sleep(10);
+                    Thread.Sleep(15);
                 }
             }
             catch (Exception e)
@@ -293,7 +289,7 @@ namespace Quaver.Shared.Screens.Gameplay
                 LogVideoError("Loader Crash: " + e.Message);
             }
         }
-        
+
         private void LogVideoError(string msg)
         {
             try {
@@ -302,24 +298,27 @@ namespace Quaver.Shared.Screens.Gameplay
             } catch {}
         }
 
-        // --- MAIN THREAD: CONVERTS BYTES TO TEXTURES ---
+        // --- MAIN THREAD: GPU UPLOAD ---
         private void ProcessVideoTextures()
         {
             if (AudioEngine.Track == null) return;
             
+            // 1. Dispose Garbage (Free VRAM)
+            while (GarbageTextures.TryDequeue(out var tex))
+            {
+                if (!tex.IsDisposed) tex.Dispose();
+            }
+
             var time = AudioEngine.Track.Time;
             int currentFrame = (int)(Math.Max(0, time) / 33.333f);
 
-            int uploads = 0;
-
-            // Prioritize the immediate next frames
-            for (int i = currentFrame; i < currentFrame + LOOKAHEAD_FRAMES; i++)
+            // 2. Upload ONE texture for the immediate future
+            // We only check 5 frames ahead to save VRAM.
+            for (int i = currentFrame; i < currentFrame + GPU_LOOKAHEAD; i++)
             {
-                if (uploads >= MAX_UPLOADS_PER_FRAME) break;
-
                 if (VideoBuffer.TryGetValue(i, out var frame))
                 {
-                    // If we have raw bytes but no texture, create it now!
+                    // If we have data but no texture yet
                     if (frame.Texture == null && frame.RawData != null)
                     {
                         try
@@ -328,14 +327,12 @@ namespace Quaver.Shared.Screens.Gameplay
                             {
                                 frame.Texture = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
                             }
-                            // Free the raw byte array immediately to save RAM
-                            frame.RawData = null;
-                            uploads++;
+                            frame.RawData = null; // Free RAM immediately
+                            
+                            // IMPORTANT: STOP. Only upload 1 texture per frame to prevent stutter.
+                            return; 
                         }
-                        catch
-                        {
-                            // Corrupt image or device lost
-                        }
+                        catch { }
                     }
                 }
             }
@@ -350,7 +347,7 @@ namespace Quaver.Shared.Screens.Gameplay
             Screen.Ruleset?.Update(gameTime);
             Container?.Update(gameTime);
 
-            // PROCESS TEXTURES ON MAIN THREAD
+            // Run Texture Management
             ProcessVideoTextures();
 
             UpdateGradeDisplay();
@@ -390,21 +387,20 @@ namespace Quaver.Shared.Screens.Gameplay
                 Texture2D texToDraw = null;
 
                 // 1. Try exact frame
-                if (VideoBuffer.TryGetValue(frameIndex, out var exact) && exact.IsReady)
+                if (VideoBuffer.TryGetValue(frameIndex, out var exact) && exact.Texture != null && !exact.Texture.IsDisposed)
                     texToDraw = exact.Texture;
-                // 2. Fallback to previous frames if buffering is lagging
-                else if (VideoBuffer.TryGetValue(frameIndex - 1, out var prev) && prev.IsReady)
+                // 2. Try previous frame (buffering catchup)
+                else if (VideoBuffer.TryGetValue(frameIndex - 1, out var prev) && prev.Texture != null && !prev.Texture.IsDisposed)
                     texToDraw = prev.Texture;
-                // 3. Fallback to whatever we displayed last (Frozen frame is better than black screen)
+                // 3. Fallback to frozen frame
                 else
                     texToDraw = CurrentDisplayFrame;
 
                 if (texToDraw != null && !texToDraw.IsDisposed)
                 {
                     CurrentDisplayFrame = texToDraw;
-                    LastFrameIndex = frameIndex;
 
-                    // Ensure alpha is 0 on the main background so it doesn't cover us
+                    // Ensure alpha is 0 on the main background
                     if (Background != null) Background.Alpha = 0;
 
                     VideoBatch.Begin();
@@ -428,9 +424,11 @@ namespace Quaver.Shared.Screens.Gameplay
             foreach(var kvp in VideoBuffer)
             {
                 kvp.Value.Texture?.Dispose();
-                kvp.Value.RawData = null;
             }
             VideoBuffer.Clear();
+            
+            // Cleanup Garbage
+            while(GarbageTextures.TryDequeue(out var t)) t?.Dispose();
 
             if (VideoBatch != null) VideoBatch.Dispose();
 
