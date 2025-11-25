@@ -1703,58 +1703,41 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
         public override void Draw(GameTime gameTime)
         {
-            // 1. Draw the Game normally first
-            base.Draw(gameTime);
-
-            // 2. Try to Draw Video ON TOP (Layer 999)
+            // 1. VIDEO RENDER (Layer 0 - Background)
             try
             {
                 var currentMap = MapManager.Selected.Value;
-                
-                // Only run if map is loaded
                 if (currentMap != null)
                 {
+                    // Set Paths
                     var songsFolder = ConfigManager.SongDirectory.Value;
                     var mapFolder = currentMap.Directory;
                     var videoPath = Path.Combine(songsFolder, mapFolder, "video");
-                    var currentTime = AudioEngine.Track.Time;
                     
-                    // Calculate Frame (30 FPS)
+                    var currentTime = AudioEngine.Track.Time;
                     var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
                     var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
-                    // --- LOGGING: Writes to Quaver/Logs/video_debug.txt ---
-                    if (frameIndex % 60 == 0) 
-                    {
-                        var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "video_debug.txt");
-                        var msg = $"[Time: {currentTime:F0}] Path: {frameFile}";
-
-                        if (!Directory.Exists(videoPath)) msg += " [ERROR: Folder missing]";
-                        else if (!File.Exists(frameFile)) msg += " [ERROR: Image missing]";
-                        else msg += " [OK: Found]";
-
-                        try { File.AppendAllText(logPath, msg + Environment.NewLine); } catch {}
-                    }
-                    // ------------------------------------------------------
-
-                    // Check if file exists before trying to draw
+                    // Only draw if file exists
                     if (File.Exists(frameFile))
                     {
                         using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                         {
                             var device = GameBase.Game.GraphicsDevice;
                             var videoFrame = Texture2D.FromStream(device, stream);
-                            var spriteBatch = GameBase.Game.SpriteBatch;
-
-                            // Force a fresh render batch on top of everything
-                            spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.AlphaBlend);
                             
-                            // Draw Full Screen
-                            int w = device.Viewport.Width;
-                            int h = device.Viewport.Height;
-                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, w, h), Color.White);
-                            
-                            spriteBatch.End();
+                            // FIX: Create a NEW SpriteBatch to avoid the "Begin" crash
+                            using (var myBatch = new SpriteBatch(device))
+                            {
+                                myBatch.Begin();
+                                
+                                // Draw Full Screen
+                                int w = device.Viewport.Width;
+                                int h = device.Viewport.Height;
+                                myBatch.Draw(videoFrame, new Rectangle(0, 0, w, h), Color.White);
+                                
+                                myBatch.End();
+                            }
 
                             videoFrame.Dispose();
                         }
@@ -1763,12 +1746,15 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             }
             catch (Exception e)
             {
-                // Log crashes too
+                // Log crash to Logs folder if something explodes
                 try {
                     var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "video_debug.txt");
                     File.AppendAllText(logPath, "CRASH: " + e.Message + Environment.NewLine); 
                 } catch {}
             }
+
+            // 2. Draw Game (Notes/UI) on top
+            base.Draw(gameTime);
         }
     }
 }
