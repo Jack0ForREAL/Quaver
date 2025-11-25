@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.IO; // Added for Video Mod
+using System.IO;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics; // Added for Texture2D
+using Microsoft.Xna.Framework.Graphics;
 using Quaver.API.Enums;
 using Quaver.API.Helpers;
 using Quaver.API.Maps.Processors.Rating;
@@ -215,17 +215,15 @@ namespace Quaver.Shared.Screens.Gameplay
 
         public override void Draw(GameTime gameTime)
         {
-            // Clear the screen
+            // 1. Standard Game Draw
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
-
-            // --- VIDEO MOD: RENDER BEHIND BACKGROUND ---
-            DrawVideoLayer();
-            // -------------------------------------------
-
             Background.Draw(gameTime);
             BattleRoyaleBackgroundAlerter?.Draw(gameTime);
             Screen.Ruleset?.Draw(gameTime);
             Container?.Draw(gameTime);
+
+            // 2. VIDEO MOD: RENDER ON TOP (For Debugging)
+            DrawVideoLayer();
         }
 
         // --- VIDEO MOD LOGIC ---
@@ -236,32 +234,42 @@ namespace Quaver.Shared.Screens.Gameplay
                 var currentMap = MapManager.Selected.Value;
                 if (currentMap == null) return;
 
+                // Force background invisible just in case
+                Background.Alpha = 0;
+
                 var songsFolder = ConfigManager.SongDirectory.Value;
                 var mapFolder = currentMap.Directory;
                 var videoPath = Path.Combine(songsFolder, mapFolder, "video");
 
-                // Optimization: Only check folder existence once per frame, not heavy
-                if (!Directory.Exists(videoPath)) return;
-
                 var currentTime = AudioEngine.Track.Time;
-                // Calculate frame index (30 FPS)
                 var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
+                var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+
+                // --- LOGGING ---
+                // Writes to Quaver/Logs/video_debug.txt
+                // Logs EVERY frame for the first 5 seconds (150 frames) to catch startup issues
+                if (frameIndex < 150 || frameIndex % 60 == 0) 
+                {
+                    try {
+                        var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+                        if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
+
+                        var logPath = Path.Combine(logDir, "video_debug.txt");
+                        var status = File.Exists(frameFile) ? "OK" : "MISSING";
+                        File.AppendAllText(logPath, $"[{frameIndex}] {frameFile} -> {status}" + Environment.NewLine);
+                    } catch {}
+                }
+                // ----------------
+
+                if (!Directory.Exists(videoPath)) return;
 
                 // Only load a new texture if the frame changed! (Fixes Lag)
                 if (frameIndex != LastVideoFrameIndex)
                 {
-                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
-                    
                     if (File.Exists(frameFile))
                     {
-                        // Dispose old frame
-                        if (VideoTexture != null)
-                        {
-                            VideoTexture.Dispose();
-                            VideoTexture = null;
-                        }
+                        if (VideoTexture != null) VideoTexture.Dispose();
 
-                        // Load new frame
                         using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                         {
                             VideoTexture = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
@@ -274,7 +282,8 @@ namespace Quaver.Shared.Screens.Gameplay
                 if (VideoTexture != null && !VideoTexture.IsDisposed)
                 {
                     var spriteBatch = GameBase.Game.SpriteBatch;
-                    spriteBatch.Begin();
+                    // Use Immediate mode to force draw on top
+                    spriteBatch.Begin(SpriteSortMode.Immediate, BlendState.AlphaBlend);
                     
                     int w = GameBase.Game.GraphicsDevice.Viewport.Width;
                     int h = GameBase.Game.GraphicsDevice.Viewport.Height;
@@ -283,16 +292,18 @@ namespace Quaver.Shared.Screens.Gameplay
                     spriteBatch.End();
                 }
             }
-            catch 
+            catch (Exception e)
             {
-                // Silent fail to prevent gameplay interruption
+                try {
+                    var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "video_debug.txt");
+                    File.AppendAllText(logPath, "CRASH: " + e.Message + Environment.NewLine);
+                } catch {}
             }
         }
         // -----------------------
 
         public override void Destroy()
         {
-            // Clean up video texture when screen closes
             if (VideoTexture != null)
                 VideoTexture.Dispose();
 
