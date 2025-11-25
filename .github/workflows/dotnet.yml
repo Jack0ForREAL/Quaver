@@ -1,28 +1,33 @@
-# This workflow will build a .NET project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
-
-name: .NET
+name: Build Quaver Mod
 
 on:
   push:
-    branches: [ "develop" ]
-  pull_request:
-    branches: [ "develop" ]
+    branches: [ develop, master, main ]
+  workflow_dispatch:
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 6.0.x
-    - name: Checkout submodules
-      run: git -c submodule."Quaver.Server.Client".update=none submodule update --init --recursive
-    - name: Build
-      run: |
-        cd Quaver
-        dotnet build
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build and Publish
+      # This compiles the game and puts it in a folder called "PublishedGame"
+      run: dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./PublishedGame
+
+    - name: Upload Game Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Quaver-Video-Mod
+        path: ./PublishedGame
