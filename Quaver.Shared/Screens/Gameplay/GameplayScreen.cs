@@ -6,6 +6,7 @@
 */
 
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -59,7 +60,6 @@ using Wobble.Logging;
 using Wobble.Platform;
 using Wobble.Screens;
 using MathHelper = Microsoft.Xna.Framework.MathHelper;
-using System.IO;
 using Microsoft.Xna.Framework.Graphics;
 using Quaver.Shared.Audio;
 
@@ -1700,47 +1700,51 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             NotificationManager.Show(NotificationLevel.Info,
                 $"Gameplay overlay is now {on}. Press Shift+F6 to toggle the display.", null, true);
         }
-        
+
         public override void Draw(GameTime gameTime)
         {
             // 1. VIDEO DRAWING (Layer 0 - Bottom)
             try
             {
-                // FIX: Use Path.GetDirectoryName(Map.FilePath) because Map.Directory doesn't exist directly
-                var mapDirectory = Path.GetDirectoryName(Map.FilePath);
-                var videoPath = Path.Combine(mapDirectory, "video");
-
-                if (Directory.Exists(videoPath))
+                // We use MapManager to get the folder because the 'Map' object usually holds relative paths
+                var currentMap = MapManager.Selected.Value;
+                
+                if (currentMap != null)
                 {
-                    // FIX: Use AudioEngine.Source.Time.TotalMilliseconds
-                    // 33.33f is for 30 FPS. Change to 16.66f for 60 FPS video.
-                    var currentTime = AudioEngine.Source.Time.TotalMilliseconds;
-                    var frameIndex = (int)(Math.Max(0, currentTime) / 33.33f);
-                    
-                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+                    // Construct the full path: Songs Folder + Map Directory + "video"
+                    var songsFolder = ConfigManager.SongDirectory.Value;
+                    var mapFolder = currentMap.Directory;
+                    var videoPath = Path.Combine(songsFolder, mapFolder, "video");
 
-                    if (File.Exists(frameFile))
+                    if (Directory.Exists(videoPath) && AudioEngine.Track != null && !AudioEngine.Track.IsDisposed)
                     {
-                        using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
+                        // Calculate frame. 33.33ms = 30 FPS. Use 16.66 for 60 FPS.
+                        var currentTime = AudioEngine.Track.Time;
+                        var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
+                        var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+
+                        if (File.Exists(frameFile))
                         {
-                            // FIX: Use GameBase.Game to get the graphics device
-                            var device = GameBase.Game.GraphicsDevice;
-                            var videoFrame = Texture2D.FromStream(device, stream);
-                            var spriteBatch = GameBase.Game.SpriteBatch;
+                            using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
+                            {
+                                var device = GameBase.Game.GraphicsDevice;
+                                var videoFrame = Texture2D.FromStream(device, stream);
+                                var spriteBatch = GameBase.Game.SpriteBatch;
 
-                            spriteBatch.Begin();
-                            // Stretch to 1920x1080
-                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
-                            spriteBatch.End();
+                                spriteBatch.Begin();
+                                // Draw video stretched to 1920x1080
+                                spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
+                                spriteBatch.End();
 
-                            videoFrame.Dispose();
+                                videoFrame.Dispose();
+                            }
                         }
                     }
                 }
             }
             catch
             {
-                // Silent fail to prevent crashing
+                // If anything fails (file busy, track disposed), just ignore it and draw the game
             }
 
             // 2. GAME DRAWING (Layer 1 - Top)
