@@ -92,6 +92,7 @@ namespace Quaver.Shared.Screens.Gameplay
         // Configuration
         private const int DISK_LOOKAHEAD = 100; // Keep 3 seconds of raw bytes in RAM
         private const int GPU_LOOKAHEAD = 5;    // Only keep 5 textures in VRAM to prevent lag
+        private double TimeSinceLastUpdate = 0;
         
         private ConcurrentDictionary<int, VideoFrame> VideoBuffer = new ConcurrentDictionary<int, VideoFrame>();
         private ConcurrentQueue<Texture2D> GarbageTextures = new ConcurrentQueue<Texture2D>();
@@ -298,13 +299,19 @@ namespace Quaver.Shared.Screens.Gameplay
             } catch {}
         }
 
-        // --- MAIN THREAD: GPU UPLOAD ---
-        private void ProcessVideoTextures()
+        // --- MAIN THREAD: GPU UPLOAD (THROTTLED) ---
+        private void ProcessVideoTextures(GameTime gameTime)
         {
+            // 1. Throttle: Only run this logic 30 times a second (every 33ms)
+            // This prevents the "Lag" when game runs at 1000FPS
+            TimeSinceLastUpdate += gameTime.ElapsedGameTime.TotalMilliseconds;
+            if (TimeSinceLastUpdate < 33.0) return; 
+            TimeSinceLastUpdate = 0;
+
             if (AudioEngine.Track == null) return;
             
-            // 1. Dispose Garbage (Free VRAM)
-            while (GarbageTextures.TryDequeue(out var tex))
+            // 2. Cleanup Old Textures (Slowly, 1 per cycle to prevent stutter)
+            if (GarbageTextures.TryDequeue(out var tex))
             {
                 if (!tex.IsDisposed) tex.Dispose();
             }
@@ -312,8 +319,8 @@ namespace Quaver.Shared.Screens.Gameplay
             var time = AudioEngine.Track.Time;
             int currentFrame = (int)(Math.Max(0, time) / 33.333f);
 
-            // 2. Upload ONE texture for the immediate future
-            // We only check 5 frames ahead to save VRAM.
+            // 3. Upload ONE texture if needed
+            // We check a small range ahead
             for (int i = currentFrame; i < currentFrame + GPU_LOOKAHEAD; i++)
             {
                 if (VideoBuffer.TryGetValue(i, out var frame))
@@ -328,9 +335,7 @@ namespace Quaver.Shared.Screens.Gameplay
                                 frame.Texture = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
                             }
                             frame.RawData = null; // Free RAM immediately
-                            
-                            // IMPORTANT: STOP. Only upload 1 texture per frame to prevent stutter.
-                            return; 
+                            return; // Stop immediately after 1 upload
                         }
                         catch { }
                     }
@@ -348,7 +353,7 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Update(gameTime);
 
             // Run Texture Management
-            ProcessVideoTextures();
+            ProcessVideoTextures(gameTime);
 
             UpdateGradeDisplay();
 
