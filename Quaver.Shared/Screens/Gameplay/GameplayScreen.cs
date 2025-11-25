@@ -59,6 +59,9 @@ using Wobble.Logging;
 using Wobble.Platform;
 using Wobble.Screens;
 using MathHelper = Microsoft.Xna.Framework.MathHelper;
+using System.IO;
+using Microsoft.Xna.Framework.Graphics;
+using Quaver.Shared.Audio;
 
 namespace Quaver.Shared.Screens.Gameplay
 {
@@ -1697,4 +1700,55 @@ namespace Quaver.Shared.Screens.Gameplay
                 $"Gameplay overlay is now {on}. Press Shift+F6 to toggle the display.", null, true);
         }
     }
+// =================================================================
+        // VIDEO HACK START
+        // =================================================================
+        public override void Draw(GameTime gameTime)
+        {
+            // 1. VIDEO DRAWING (Layer 0 - Bottom)
+            try
+            {
+                // Look for "video" folder in the current map directory
+                var videoPath = Path.Combine(Map.Directory, "video");
+
+                if (Directory.Exists(videoPath))
+                {
+                    // Calculate frame based on song time (30 FPS = 33ms. Change 33f to 16.6f for 60fps)
+                    // We use Math.Max(0) to prevent crashing at the start of song
+                    var frameIndex = (int)(Math.Max(0, AudioEngine.Time) / 33f);
+                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+
+                    if (File.Exists(frameFile))
+                    {
+                        // Load texture raw from disk (Heavy on CPU but works for this hack)
+                        using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
+                        {
+                            var device = QuaverScreenManager.Game.GraphicsDevice;
+                            var videoFrame = Texture2D.FromStream(device, stream);
+                            var spriteBatch = QuaverScreenManager.Game.SpriteBatch;
+
+                            // Draw the video to fill the screen (1920x1080)
+                            spriteBatch.Begin();
+                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
+                            spriteBatch.End();
+
+                            // Delete texture from RAM immediately
+                            videoFrame.Dispose();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Silent fail (don't crash game if image is busy)
+            }
+
+            // 2. GAME DRAWING (Layer 1 - Top)
+            // This draws the Notes, UI, and default background ON TOP of the video.
+            // You MUST remove the background image from your .qua file for this to be seen!
+            base.Draw(gameTime);
+        }
+        // =================================================================
+        // VIDEO HACK END
+        // =================================================================
 }
