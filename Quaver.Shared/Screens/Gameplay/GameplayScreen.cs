@@ -1703,41 +1703,30 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
         public override void Draw(GameTime gameTime)
         {
-            // 1. Draw the Game Elements first
-            base.Draw(gameTime);
-
+            // 1. VIDEO RENDERING (Layer 0 - Background)
             try
             {
                 var currentMap = MapManager.Selected.Value;
-                
                 if (currentMap != null)
                 {
+                    // Setup Paths
+                    // Note: If you are running from Steam folder, we don't need absolute paths, relative might work too.
+                    // But we stick to the Config path as it works for the lag.
                     var songsFolder = ConfigManager.SongDirectory.Value;
                     var mapFolder = currentMap.Directory;
                     var videoPath = Path.Combine(songsFolder, mapFolder, "video");
-                    var currentTime = AudioEngine.Track.Time;
                     
-                    // Calculate Frame (30 FPS)
+                    var currentTime = AudioEngine.Track.Time;
                     var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
                     var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
 
-                    // --- LOGGING LOGIC (Runs once every ~30 frames to save performance) ---
-                    if (frameIndex % 30 == 0) 
-                    {
-                        var logMsg = $"[Time: {currentTime:F0}] Searching: {frameFile} | Found: {File.Exists(frameFile)}";
-                        
-                        if (!Directory.Exists(videoPath))
-                             logMsg = "ERROR: Video folder not found at: " + videoPath;
-
-                        // Write to C:\quaver_log.txt
-                        // If this crashes, try changing path to your desktop path manually
-                        try {
-                            using (StreamWriter sw = File.AppendText(@"C:\quaver_log.txt")) {
-                                sw.WriteLine(logMsg);
-                            }
-                        } catch {}
+                    // --- LOGGING (To Steam Folder) ---
+                    if (frameIndex % 60 == 0) {
+                         var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "video_log.txt");
+                         var msg = $"[Time: {currentTime}] Reading: {frameFile}";
+                         try { File.AppendAllText(logPath, msg + Environment.NewLine); } catch {}
                     }
-                    // ---------------------------------------------------------------------
+                    // --------------------------------
 
                     if (Directory.Exists(videoPath) && File.Exists(frameFile))
                     {
@@ -1747,23 +1736,31 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                             var videoFrame = Texture2D.FromStream(device, stream);
                             var spriteBatch = GameBase.Game.SpriteBatch;
 
+                            // FORCE DIM TO 0 so the black box doesn't cover our video
+                            var oldDim = ConfigManager.BackgroundDim.Value;
+                            ConfigManager.BackgroundDim.Value = 0;
+
                             spriteBatch.Begin();
-                            // Draw ON TOP to guarantee visibility for testing
-                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
+                            
+                            // Draw Full Screen (Dynamic Size)
+                            int width = GameBase.Game.GraphicsDevice.Viewport.Width;
+                            int height = GameBase.Game.GraphicsDevice.Viewport.Height;
+                            
+                            spriteBatch.Draw(videoFrame, new Rectangle(0, 0, width, height), Color.White);
                             spriteBatch.End();
+
+                            // Restore Dim (Optional, but keeps settings clean)
+                            // ConfigManager.BackgroundDim.Value = oldDim; 
 
                             videoFrame.Dispose();
                         }
                     }
                 }
             }
-            catch (Exception e)
-            {
-                // Log Crash
-                try {
-                     File.AppendAllText(@"C:\quaver_log.txt", "CRASH: " + e.Message + "\n");
-                } catch {}
-            }
+            catch {}
+
+            // 2. Draw Game Elements (Notes, UI) ON TOP
+            base.Draw(gameTime);
         }
     }
 }
