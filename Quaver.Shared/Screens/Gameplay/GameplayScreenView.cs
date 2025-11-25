@@ -46,12 +46,13 @@ using Wobble.Screens;
 using Wobble.Window;
 using MathHelper = Microsoft.Xna.Framework.MathHelper;
 
-// REQUIRED FOR HIGH PERFORMANCE DECODING
+// OPTIMIZATION LIBRARIES
+using System.Buffers; // Required for ArrayPool
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using Color = Microsoft.Xna.Framework.Color; // Resolve conflict with ImageSharp Color
-using Rectangle = Microsoft.Xna.Framework.Rectangle; // Resolve conflict with ImageSharp Rectangle
+using Color = Microsoft.Xna.Framework.Color; 
+using Rectangle = Microsoft.Xna.Framework.Rectangle; 
 
 namespace Quaver.Shared.Screens.Gameplay
 {
@@ -88,24 +89,29 @@ namespace Quaver.Shared.Screens.Gameplay
         private SpectatorCount SpectatorCount { get; }
         private ReplayController ReplayController { get; }
 
-        // --- VIDEO MOD VARIABLES ---
+        // --- ULTRA-OPTIMIZED VIDEO MOD ---
         private class DecodedFrame
         {
             public int Index;
-            public byte[] PixelData; // Raw RGBA bytes (Decoded off-thread)
+            public byte[] PixelData; // Rented from ArrayPool
             public int Width;
             public int Height;
         }
 
-        private const int BUFFER_SIZE = 60; // Keep 2 seconds decoded
+        // CONFIGURATION: MEMORY BUDGET
+        // 2048 MB (2GB) of RAM Budget for Video Buffering. 
+        // 1 frame at 1080p is ~8MB. This allows ~250 frames to be buffered in RAM.
+        private const long MAX_RAM_USAGE_BYTES = 2048 * 1024 * 1024L; 
+        
         private ConcurrentDictionary<int, DecodedFrame> VideoBuffer = new ConcurrentDictionary<int, DecodedFrame>();
         private CancellationTokenSource LoaderCanceller = new CancellationTokenSource();
         private SpriteBatch VideoBatch;
         
-        // We reuse ONE texture to prevent VRAM Garbage Collection lag
+        // Single reusable texture to prevent VRAM Fragmentation
         private Texture2D VideoTexture; 
         private int LastUploadedIndex = -1;
         private double TimeSinceLastUpdate = 0;
+        private long CurrentMemoryUsage = 0;
         // ---------------------------
 
         public GameplayScreenView(Screen screen) : base(screen)
@@ -226,8 +232,7 @@ namespace Quaver.Shared.Screens.Gameplay
                 OnlineManager.Client.OnGameEnded += OnGameEnded;
         }
 
-        // --- BACKGROUND THREAD: DECODE JPG TO PIXELS ---
-        // This is the heavy lifting. It runs on a separate core.
+        // --- BACKGROUND THREAD: SMART MEMORY LOADER ---
         private void RunVideoLoader(CancellationToken token)
         {
             try 
@@ -251,36 +256,54 @@ namespace Quaver.Shared.Screens.Gameplay
 
                     var time = AudioEngine.Track.Time;
                     int startFrame = (int)(Math.Max(0, time) / 33.333f);
-                    int endFrame = startFrame + BUFFER_SIZE; 
+                    
+                    // LOOKAHEAD: DYNAMIC
+                    // We keep loading frames until we hit MAX_RAM_USAGE_BYTES
+                    // or until we are 600 frames (20 seconds) ahead, whichever comes first.
+                    int endFrame = startFrame + 600; 
 
-                    // Load & Decode frames
-                    // We use Parallelism here to use ALL CPU CORES if needed for 1080p
                     Parallel.For(startFrame, endFrame, new ParallelOptions { MaxDegreeOfParallelism = 2 }, i =>
                     {
                         if (token.IsCancellationRequested) return;
-                        if (VideoBuffer.ContainsKey(i)) return; // Already loaded
+                        
+                        // 1. Budget Check: Stop loading if we used too much RAM
+                        if (Interlocked.Read(ref CurrentMemoryUsage) >= MAX_RAM_USAGE_BYTES) return;
+                        
+                        // 2. Already Loaded Check
+                        if (VideoBuffer.ContainsKey(i)) return; 
 
                         var file = Path.Combine(videoPath, $"frame{i}.jpg");
                         if (File.Exists(file))
                         {
                             try 
                             {
-                                // Use ImageSharp to decode JPG to Raw Bytes (Rgba32)
-                                // This happens OFF the main thread, so no lag!
                                 using (var image = SixLabors.ImageSharp.Image.Load<Rgba32>(file))
                                 {
-                                    var pixelData = new byte[image.Width * image.Height * 4];
-                                    image.CopyPixelDataTo(pixelData);
+                                    // 3. ARRAY POOLING (Zero Allocation)
+                                    // Rent a buffer instead of creating new byte[]
+                                    int byteCount = image.Width * image.Height * 4;
+                                    byte[] rentedArray = ArrayPool<byte>.Shared.Rent(byteCount);
+                                    
+                                    // Copy pixels to rented array
+                                    image.CopyPixelDataTo(rentedArray);
                                     
                                     var frame = new DecodedFrame 
                                     { 
                                         Index = i, 
-                                        PixelData = pixelData,
+                                        PixelData = rentedArray,
                                         Width = image.Width,
                                         Height = image.Height
                                     };
                                     
-                                    VideoBuffer.TryAdd(i, frame);
+                                    if (VideoBuffer.TryAdd(i, frame))
+                                    {
+                                        Interlocked.Add(ref CurrentMemoryUsage, byteCount);
+                                    }
+                                    else
+                                    {
+                                        // If add failed, return array immediately
+                                        ArrayPool<byte>.Shared.Return(rentedArray);
+                                    }
                                 }
                             }
                             catch { }
@@ -291,10 +314,17 @@ namespace Quaver.Shared.Screens.Gameplay
                     var keys = VideoBuffer.Keys.ToList();
                     foreach(var k in keys)
                     {
-                        if (k < startFrame - 10)
+                        // Remove frames that are 30 frames (1 second) behind
+                        if (k < startFrame - 30)
                         {
                             if (VideoBuffer.TryRemove(k, out var oldFrame))
-                                oldFrame.PixelData = null; // Help GC
+                            {
+                                int byteCount = oldFrame.Width * oldFrame.Height * 4;
+                                Interlocked.Add(ref CurrentMemoryUsage, -byteCount);
+                                
+                                // IMPORTANT: RETURN ARRAY TO POOL
+                                ArrayPool<byte>.Shared.Return(oldFrame.PixelData);
+                            }
                         }
                     }
 
@@ -315,10 +345,9 @@ namespace Quaver.Shared.Screens.Gameplay
             } catch {}
         }
 
-        // --- MAIN THREAD: UPLOAD PIXELS TO GPU ---
+        // --- MAIN THREAD: ZERO-LAG UPDATE ---
         private void UpdateVideoTexture(GameTime gameTime)
         {
-            // Limit checks to 30fps
             TimeSinceLastUpdate += gameTime.ElapsedGameTime.TotalMilliseconds;
             if (TimeSinceLastUpdate < 30.0) return; 
             TimeSinceLastUpdate = 0;
@@ -328,10 +357,8 @@ namespace Quaver.Shared.Screens.Gameplay
             var time = AudioEngine.Track.Time;
             int currentFrameIndex = (int)(Math.Max(0, time) / 33.333f);
 
-            // Optimization: Don't upload if we are already on this frame
             if (currentFrameIndex == LastUploadedIndex) return;
 
-            // Try to get the frame from buffer
             DecodedFrame frameToDraw = null;
             if (VideoBuffer.TryGetValue(currentFrameIndex, out var exact)) frameToDraw = exact;
             else if (VideoBuffer.TryGetValue(currentFrameIndex - 1, out var prev)) frameToDraw = prev;
@@ -340,16 +367,14 @@ namespace Quaver.Shared.Screens.Gameplay
             {
                 try 
                 {
-                    // If texture doesn't exist or size changed, create it
-                    // Otherwise REUSE the existing texture (Fast!)
                     if (VideoTexture == null || VideoTexture.Width != frameToDraw.Width || VideoTexture.Height != frameToDraw.Height)
                     {
                         VideoTexture?.Dispose();
                         VideoTexture = new Texture2D(GameBase.Game.GraphicsDevice, frameToDraw.Width, frameToDraw.Height);
                     }
 
-                    // This is fast because no decoding happens here, just memory copy
-                    VideoTexture.SetData(frameToDraw.PixelData);
+                    // Upload from Pool (Fast)
+                    VideoTexture.SetData(frameToDraw.PixelData, 0, frameToDraw.Width * frameToDraw.Height * 4);
                     LastUploadedIndex = currentFrameIndex;
                 }
                 catch { }
@@ -365,7 +390,6 @@ namespace Quaver.Shared.Screens.Gameplay
             Screen.Ruleset?.Update(gameTime);
             Container?.Update(gameTime);
 
-            // Run Video Logic
             UpdateVideoTexture(gameTime);
 
             UpdateGradeDisplay();
@@ -381,13 +405,12 @@ namespace Quaver.Shared.Screens.Gameplay
         {
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
 
-            // --- DRAW VIDEO ---
             if (VideoTexture != null && !VideoTexture.IsDisposed)
             {
-                // Hide main background
                 if (Background != null) Background.Alpha = 0;
 
                 VideoBatch.Begin();
+                // Draw Fullscreen
                 int w = GameBase.Game.GraphicsDevice.Viewport.Width;
                 int h = GameBase.Game.GraphicsDevice.Viewport.Height;
                 VideoBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
@@ -397,7 +420,6 @@ namespace Quaver.Shared.Screens.Gameplay
             {
                 Background.Draw(gameTime);
             }
-            // ------------------
 
             BattleRoyaleBackgroundAlerter?.Draw(gameTime);
             Screen.Ruleset?.Draw(gameTime);
@@ -407,7 +429,14 @@ namespace Quaver.Shared.Screens.Gameplay
         public override void Destroy()
         {
             LoaderCanceller.Cancel();
+            
+            // CLEANUP: Return everything to pool
+            foreach(var kvp in VideoBuffer)
+            {
+               ArrayPool<byte>.Shared.Return(kvp.Value.PixelData);
+            }
             VideoBuffer.Clear();
+            
             VideoTexture?.Dispose();
             if (VideoBatch != null) VideoBatch.Dispose();
 
@@ -418,6 +447,7 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Destroy();
         }
 
+        // ... (Remaining Helper Functions identical to previous file) ...
         private void CreateBackground()
         {
             var background = BackgroundHelper.RawTexture;
