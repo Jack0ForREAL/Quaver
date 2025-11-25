@@ -1701,6 +1701,21 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                 $"Gameplay overlay is now {on}. Press Shift+F6 to toggle the display.", null, true);
         }
 
+        private void HandleOverlayToggleInput(GameTime gameTime)
+        {
+            if (!KeyboardManager.IsShiftDown())
+                return;
+
+            if (!KeyboardManager.IsUniqueKeyPress(Keys.F6))
+                return;
+
+            ConfigManager.DisplayGameplayOverlay.Value = !ConfigManager.DisplayGameplayOverlay.Value;
+            var on = ConfigManager.DisplayGameplayOverlay.Value ? "on" : "off";
+
+            NotificationManager.Show(NotificationLevel.Info,
+                $"Gameplay overlay is now {on}. Press Shift+F6 to toggle the display.", null, true);
+        }
+
         public override void Draw(GameTime gameTime)
         {
             // Debug Color Codes (Look at top-left corner):
@@ -1766,10 +1781,16 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             // 4. Draw the Debug Square (Top Left)
             try 
             {
+                var device = GameBase.Game.GraphicsDevice;
+                var debugTexture = new Texture2D(device, 1, 1);
+                debugTexture.SetData(new[] { Color.White });
+
                 var spriteBatch = GameBase.Game.SpriteBatch;
                 spriteBatch.Begin();
-                spriteBatch.Draw(Wobble.Managers.TextureManager.WhitePixel, new Rectangle(0, 0, 100, 100), debugColor);
+                spriteBatch.Draw(debugTexture, new Rectangle(0, 0, 100, 100), debugColor);
                 spriteBatch.End();
+                
+                debugTexture.Dispose();
             }
             catch {}
 
