@@ -81,6 +81,8 @@ namespace Quaver.Shared.Screens.Gameplay
         // --- VIDEO MOD VARIABLES ---
         private Texture2D VideoTexture;
         private int LastVideoFrameIndex = -1;
+        private SpriteBatch VideoBatch; // Dedicated batch for performance
+        private string CachedVideoPath = null; // Cache path to avoid string joining every frame
         // ---------------------------
 
         public GameplayScreenView(Screen screen) : base(screen)
@@ -91,6 +93,9 @@ namespace Quaver.Shared.Screens.Gameplay
                 true).OverallDifficulty);
 
             CreateBackground();
+
+            // Init Video Batcher
+            VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
                                                   && ConfigManager.EnableBattleRoyaleBackgroundFlashing.Value)
@@ -215,24 +220,25 @@ namespace Quaver.Shared.Screens.Gameplay
 
         public override void Draw(GameTime gameTime)
         {
-            // Clear screen to black
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
 
-            // 1. DRAW VIDEO (Bottom Layer)
-            // Only draw if video exists
-            if (!DrawVideoLayer()) 
+            // 1. Draw Video First (Optimized)
+            // We intentionally use a "return bool" to decide if we should draw the normal background
+            // This prevents background flickering if the video isn't ready yet
+            bool videoDrawn = DrawVideoLayer();
+
+            if (!videoDrawn)
             {
-                // If no video, draw standard background
                 Background.Draw(gameTime);
             }
 
-            // 2. Draw everything else on top
+            // 2. Draw Game UI/Notes on top
             BattleRoyaleBackgroundAlerter?.Draw(gameTime);
-            Screen.Ruleset?.Draw(gameTime); // Notes
-            Container?.Draw(gameTime);      // UI
+            Screen.Ruleset?.Draw(gameTime);
+            Container?.Draw(gameTime);
         }
 
-        // --- VIDEO MOD LOGIC (FIXED CRASH) ---
+        // --- OPTIMIZED VIDEO LOGIC ---
         private bool DrawVideoLayer()
         {
             try
@@ -240,26 +246,29 @@ namespace Quaver.Shared.Screens.Gameplay
                 var currentMap = MapManager.Selected.Value;
                 if (currentMap == null) return false;
 
-                var songsFolder = ConfigManager.SongDirectory.Value;
-                var mapFolder = currentMap.Directory;
-                var videoPath = Path.Combine(songsFolder, mapFolder, "video");
+                // Optimization: Cache path on first run so we don't combine strings 144 times/sec
+                if (CachedVideoPath == null)
+                {
+                    CachedVideoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, "video");
+                }
 
-                // Optimization: If folder doesn't exist, return false immediately to let normal BG draw
-                if (!Directory.Exists(videoPath)) return false;
+                if (!Directory.Exists(CachedVideoPath)) return false;
 
                 var currentTime = AudioEngine.Track.Time;
-                // Calculate frame index (30 FPS)
+                
+                // Use 33.33f for 30FPS. Use 16.66f for 60FPS videos.
                 var frameIndex = (int)(Math.Max(0, currentTime) / 33.333f);
 
-                // Load new frame if needed
                 if (frameIndex != LastVideoFrameIndex)
                 {
-                    var frameFile = Path.Combine(videoPath, $"frame{frameIndex}.jpg");
+                    var frameFile = Path.Combine(CachedVideoPath, $"frame{frameIndex}.jpg");
                     
                     if (File.Exists(frameFile))
                     {
+                        // Clean up old frame from memory
                         if (VideoTexture != null) VideoTexture.Dispose();
 
+                        // Load new frame directly into GPU memory
                         using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                         {
                             VideoTexture = Texture2D.FromStream(GameBase.Game.GraphicsDevice, stream);
@@ -268,25 +277,22 @@ namespace Quaver.Shared.Screens.Gameplay
                     LastVideoFrameIndex = frameIndex;
                 }
 
-                // Draw the texture
+                // Draw (Fast, reused batch)
                 if (VideoTexture != null && !VideoTexture.IsDisposed)
                 {
-                    // FIX: Create a LOCAL SpriteBatch to prevent "Begin" crash
-                    using (var myBatch = new SpriteBatch(GameBase.Game.GraphicsDevice))
-                    {
-                        myBatch.Begin();
-                        int w = GameBase.Game.GraphicsDevice.Viewport.Width;
-                        int h = GameBase.Game.GraphicsDevice.Viewport.Height;
-                        myBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
-                        myBatch.End();
-                    }
-                    return true; // Video drawn successfully
+                    // We do NOT use "using" here because VideoBatch is reused across frames
+                    VideoBatch.Begin(); 
+                    int w = GameBase.Game.GraphicsDevice.Viewport.Width;
+                    int h = GameBase.Game.GraphicsDevice.Viewport.Height;
+                    VideoBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
+                    VideoBatch.End();
+                    
+                    return true;
                 }
             }
             catch 
             {
-                // If error, return false so normal background takes over
-                return false;
+                // Ignore errors
             }
             return false;
         }
@@ -294,8 +300,9 @@ namespace Quaver.Shared.Screens.Gameplay
 
         public override void Destroy()
         {
-            if (VideoTexture != null)
-                VideoTexture.Dispose();
+            // Dispose resources to free memory
+            if (VideoTexture != null) VideoTexture.Dispose();
+            if (VideoBatch != null) VideoBatch.Dispose();
 
             if (OnlineManager.Client != null)
                 OnlineManager.Client.OnGameEnded -= OnGameEnded;
