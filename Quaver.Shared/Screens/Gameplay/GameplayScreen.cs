@@ -1740,7 +1740,7 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                         }
                         else
                         {
-                            // 3. Draw Video
+                            // 3. Draw Video (Behind Game)
                             using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                             {
                                 var device = GameBase.Game.GraphicsDevice;
@@ -1763,7 +1763,10 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                 debugColor = Color.Red; // CRASHED
             }
 
-            // 4. Draw the Debug Square
+            // 4. Draw Game (Notes, UI, etc.)
+            base.Draw(gameTime);
+
+            // 5. Draw the Debug Square (ON TOP of everything)
             try 
             {
                 var device = GameBase.Game.GraphicsDevice;
@@ -1778,9 +1781,6 @@ private void HandleOverlayToggleInput(GameTime gameTime)
                 debugTexture.Dispose();
             }
             catch {}
-
-            // 5. Draw Game
-            base.Draw(gameTime);
         }
     }
 }
