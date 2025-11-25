@@ -1685,7 +1685,7 @@ namespace Quaver.Shared.Screens.Gameplay
             }
         }
 
-        private void HandleOverlayToggleInput(GameTime gameTime)
+private void HandleOverlayToggleInput(GameTime gameTime)
         {
             if (!KeyboardManager.IsShiftDown())
                 return;
@@ -1699,16 +1699,14 @@ namespace Quaver.Shared.Screens.Gameplay
             NotificationManager.Show(NotificationLevel.Info,
                 $"Gameplay overlay is now {on}. Press Shift+F6 to toggle the display.", null, true);
         }
-    }
-// =================================================================
-        // VIDEO HACK START
-        // =================================================================
+
         public override void Draw(GameTime gameTime)
         {
             // 1. VIDEO DRAWING (Layer 0 - Bottom)
             try
             {
                 // Look for "video" folder in the current map directory
+                // We use Map.Directory safely here
                 var videoPath = Path.Combine(Map.Directory, "video");
 
                 if (Directory.Exists(videoPath))
@@ -1720,7 +1718,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
                     if (File.Exists(frameFile))
                     {
-                        // Load texture raw from disk (Heavy on CPU but works for this hack)
+                        // Load texture raw from disk
                         using (var stream = new FileStream(frameFile, FileMode.Open, FileAccess.Read))
                         {
                             var device = QuaverScreenManager.Game.GraphicsDevice;
@@ -1732,7 +1730,7 @@ namespace Quaver.Shared.Screens.Gameplay
                             spriteBatch.Draw(videoFrame, new Rectangle(0, 0, 1920, 1080), Color.White);
                             spriteBatch.End();
 
-                            // Delete texture from RAM immediately
+                            // Delete texture from RAM immediately to prevent memory leaks
                             videoFrame.Dispose();
                         }
                     }
@@ -1740,15 +1738,11 @@ namespace Quaver.Shared.Screens.Gameplay
             }
             catch
             {
-                // Silent fail (don't crash game if image is busy)
+                // Silent fail (don't crash game if image is busy or missing)
             }
 
             // 2. GAME DRAWING (Layer 1 - Top)
-            // This draws the Notes, UI, and default background ON TOP of the video.
-            // You MUST remove the background image from your .qua file for this to be seen!
             base.Draw(gameTime);
         }
-        // =================================================================
-        // VIDEO HACK END
-        // =================================================================
-}
+    } // <--- Closes GameplayScreen Class
+} // <--- Closes Namespace
