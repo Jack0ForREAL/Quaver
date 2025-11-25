@@ -1703,13 +1703,13 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
         public override void Draw(GameTime gameTime)
         {
-            // Debug Color Codes:
+            // Debug Color Codes (Look at top-left corner):
             // WHITE  = Code started running
-            // ORANGE = Cannot find the "video" folder
-            // PURPLE = Cannot find the specific "frameX.jpg" file
-            // RED    = Crash / Error
-            // GREEN  = Success (Video should be visible)
-            
+            // ORANGE = FOLDER ERROR (Check quaver.cfg SongDirectory)
+            // PURPLE = FILE ERROR (Check if images are named frame0.jpg, frame1.jpg...)
+            // RED    = CRASH (File permissions or other error)
+            // GREEN  = SUCCESS (Video is rendering)
+
             var debugColor = Color.White;
 
             try
@@ -1736,7 +1736,7 @@ private void HandleOverlayToggleInput(GameTime gameTime)
 
                         if (!File.Exists(frameFile))
                         {
-                            debugColor = Color.Purple; // FILE NOT FOUND (Checked: frameX.jpg)
+                            debugColor = Color.Purple; // FILE NOT FOUND
                         }
                         else
                         {
@@ -1764,7 +1764,6 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             }
 
             // 4. Draw the Debug Square (Top Left)
-            // Uses a default white pixel texture that always exists in Wobble
             try 
             {
                 var spriteBatch = GameBase.Game.SpriteBatch;
@@ -1777,3 +1776,5 @@ private void HandleOverlayToggleInput(GameTime gameTime)
             // 5. Draw Game
             base.Draw(gameTime);
         }
+    }
+}
