@@ -182,16 +182,9 @@ namespace Quaver.Shared.Screens.Options
                 new OptionsSubcategory("Video Backgrounds (Mod)", new List<OptionsItem>()
                     {
                         new OptionsItemCheckbox(containerRect, "Enable Video Backgrounds", ConfigManager.VideoModEnabled),
-                        // This is the NEW setting we added
-                        new OptionsItemCheckbox(containerRect, "Enable High Quality", ConfigManager.VideoModHighQuality)
-                        {
-                            Tooltip = "Uses 'video.mp4' (High) instead of 'video_low.mp4' (Low)."
-                        },
-                        new OptionsItemCheckbox(containerRect, "Auto-Configure Performance", ConfigManager.VideoModAutoConfiguration)
-                        {
-                             Tooltip = "Automatically sets RAM and Threads based on your hardware."
-                        },
-                        // These are the updated sliders with shorter text so they don't clip
+                        new OptionsItemCheckbox(containerRect, "Enable High Quality", ConfigManager.VideoModHighQuality),
+                        new OptionsItemCheckbox(containerRect, "Auto-Configure Performance", ConfigManager.VideoModAutoConfiguration),
+                        
                         new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i}M")
                         {
                             Tags = new List<string> {"memory", "buffer", "cache"}
