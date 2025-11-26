@@ -269,13 +269,15 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private async void RunVideoLoaderMp4(CancellationToken token)
         {
-            // 1. Auto-Download Check
+            if (Screen.IsSongSelectPreview) return;
+
+            // 2. Auto-Download Check
             if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
 
             var currentMap = MapManager.Selected.Value;
             if (currentMap == null) return;
             
-            // 2. Select File
+            // 3. Select File
             var fileName = ConfigManager.VideoModHighQuality.Value ? "video.mp4" : "video_low.mp4";
             var videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
             
@@ -285,20 +287,16 @@ namespace Quaver.Shared.Screens.Gameplay
                  var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
                  var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
                  
-                 if (File.Exists(otherPath)) 
-                 {
-                     videoPath = otherPath; // Found the other quality, use it
-                 }
+                 if (File.Exists(otherPath)) videoPath = otherPath;
                  else
                  {
-                     // NOTIFICATION: Video missing
-                     if (ConfigManager.VideoModEnabled.Value)
+                     if (ConfigManager.VideoModEnabled.Value && !Screen.IsSongSelectPreview)
                         NotificationManager.Show(NotificationLevel.Info, "No video file found for this map.", null, true);
                      return;
                  }
             }
 
-            // 3. Get Info
+
             var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
             VideoWidth = width;
             VideoHeight = height;
@@ -306,13 +304,13 @@ namespace Quaver.Shared.Screens.Gameplay
             
             if (VideoWidth == 0) return; 
 
-            // 4. Start FFmpeg
+            // Start FFmpeg
             try 
             {
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = VideoUtils.FFmpegPath,
-                    // COLOR FIX: Changed 'bgra' to 'rgba'
+                    // RGBA format for correct colors
                     Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -f rawvideo -pix_fmt rgba -v quiet -",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -324,12 +322,15 @@ namespace Quaver.Shared.Screens.Gameplay
                 int frameSize = VideoWidth * VideoHeight * 4;
                 int frameIndex = 0;
 
+.
+                int maxFramesToBuffer = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
+
                 while (!token.IsCancellationRequested && !FfmpegProcess.HasExited)
                 {
-                    // RAM Check - Slower sleep to prevent CPU spinning
-                    if (Interlocked.Read(ref CurrentMemoryUsage) >= MaxRamUsageBytes)
+
+                    if (VideoBuffer.Count >= maxFramesToBuffer)
                     {
-                        Thread.Sleep(5); 
+                        Thread.Sleep(10);
                         continue;
                     }
 
