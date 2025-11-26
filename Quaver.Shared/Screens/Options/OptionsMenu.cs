@@ -185,10 +185,9 @@ namespace Quaver.Shared.Screens.Options
                         new OptionsItemCheckbox(containerRect, "Enable High Quality", ConfigManager.VideoModHighQuality),
                         new OptionsItemCheckbox(containerRect, "Auto-Configure Performance", ConfigManager.VideoModAutoConfiguration),
                         
-                        new OptionsSlider(containerRect, "Max Resolution (Height)", ConfigManager.VideoModTargetHeight, i => i == 0 ? "Native" : $"{i}p")
+                       new OptionsSlider(containerRect, "Max Resolution (Height)", ConfigManager.VideoModTargetHeight, i => i == 0 ? "Native" : $"{i}p")
                         {
-                            Tags = new List<string> {"quality", "480p", "720p", "1080p"},
-                            Tooltip = "0 = Native. 480p is recommended for max FPS."
+                            Tags = new List<string> {"quality", "480p", "720p", "1080p"}
                         },
                         new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i}M")
                         {
