@@ -129,6 +129,7 @@ namespace Quaver.Shared.Screens.Gameplay
             // Start the Background Loader if enabled
             if (ConfigManager.VideoModEnabled.Value)
             {
+                // No Task.Run needed, the function is async void and handles itself
                 RunVideoLoaderMp4(VideoLoaderToken.Token);
             }
 
@@ -341,15 +342,16 @@ namespace Quaver.Shared.Screens.Gameplay
                     }
                 }
             }
-            catch (Exception ex) { Console.WriteLine("Video Error: " + ex.Message); }
-            finally 
-            {
-                 if (FfmpegProcess != null && !FfmpegProcess.HasExited) FfmpegProcess.Kill();
-            }
-        }
             catch (Exception e)
             {
                 LogVideoError("Loader Crash: " + e.Message);
+            }
+            finally 
+            {
+                 if (FfmpegProcess != null && !FfmpegProcess.HasExited)
+                 {
+                     try { FfmpegProcess.Kill(); } catch {}
+                 }
             }
         }
 
