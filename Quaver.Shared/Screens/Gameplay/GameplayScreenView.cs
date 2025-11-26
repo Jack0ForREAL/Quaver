@@ -295,7 +295,7 @@ namespace Quaver.Shared.Screens.Gameplay
                      return;
                  }
             }
-
+        
 
             var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
             VideoWidth = width;
@@ -322,7 +322,7 @@ namespace Quaver.Shared.Screens.Gameplay
                 int frameSize = VideoWidth * VideoHeight * 4;
                 int frameIndex = 0;
 
-.
+                
                 int maxFramesToBuffer = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
 
                 while (!token.IsCancellationRequested && !FfmpegProcess.HasExited)
