@@ -275,35 +275,45 @@ namespace Quaver.Shared.Screens.Gameplay
             var currentMap = MapManager.Selected.Value;
             if (currentMap == null) return;
             
-            // 2. Select File (High vs Low Quality)
+            // 2. Select File
             var fileName = ConfigManager.VideoModHighQuality.Value ? "video.mp4" : "video_low.mp4";
             var videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
             
-            // Fallback: If High missing, try Low. If Low missing, try High.
+            // Fallback Logic
             if (!File.Exists(videoPath))
             {
-                 fileName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
-                 videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
-                 if (!File.Exists(videoPath)) return;
+                 var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
+                 var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
+                 
+                 if (File.Exists(otherPath)) 
+                 {
+                     videoPath = otherPath; // Found the other quality, use it
+                 }
+                 else
+                 {
+                     // NOTIFICATION: Video missing
+                     if (ConfigManager.VideoModEnabled.Value)
+                        NotificationManager.Show(NotificationLevel.Info, "No video file found for this map.", null, true);
+                     return;
+                 }
             }
 
-            // 3. Get Info using Helper
-            // FIXED: Use Deconstruction to safely get values even if names mismatch
+            // 3. Get Info
             var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
             VideoWidth = width;
             VideoHeight = height;
             FrameTimeMs = frameTime;
             
-            if (VideoWidth == 0) return; // Failed to parse
+            if (VideoWidth == 0) return; 
 
-            // 4. Start FFmpeg Process (Pipe to STDOUT)
+            // 4. Start FFmpeg
             try 
             {
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = VideoUtils.FFmpegPath,
-                    // -threads N: Use config threads. -f rawvideo: raw pixels. -pix_fmt bgra: format for MonoGame.
-                    Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -f rawvideo -pix_fmt bgra -v quiet -",
+                    // COLOR FIX: Changed 'bgra' to 'rgba'
+                    Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -f rawvideo -pix_fmt rgba -v quiet -",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     CreateNoWindow = true
@@ -316,21 +326,20 @@ namespace Quaver.Shared.Screens.Gameplay
 
                 while (!token.IsCancellationRequested && !FfmpegProcess.HasExited)
                 {
-                    // Memory Limit Check
+                    // RAM Check - Slower sleep to prevent CPU spinning
                     if (Interlocked.Read(ref CurrentMemoryUsage) >= MaxRamUsageBytes)
                     {
-                        Thread.Sleep(10);
+                        Thread.Sleep(5); 
                         continue;
                     }
 
                     byte[] data = System.Buffers.ArrayPool<byte>.Shared.Rent(frameSize);
                     
-                    // Read exact amount of bytes for one frame
                     int totalRead = 0;
                     while (totalRead < frameSize)
                     {
                         int read = await stream.ReadAsync(data, totalRead, frameSize - totalRead, token);
-                        if (read == 0) break; // End of video
+                        if (read == 0) break; 
                         totalRead += read;
                     }
 
@@ -351,10 +360,7 @@ namespace Quaver.Shared.Screens.Gameplay
                     }
                 }
             }
-            catch (Exception e)
-            {
-                LogVideoError("Loader Crash: " + e.Message);
-            }
+            catch (Exception e) { LogVideoError("Loader Crash: " + e.Message); }
             finally 
             {
                  if (FfmpegProcess != null && !FfmpegProcess.HasExited)
@@ -467,22 +473,33 @@ namespace Quaver.Shared.Screens.Gameplay
             // --- VIDEO MOD CLEANUP ---
             VideoLoaderToken.Cancel();
             
-            // Kill FFmpeg if it's running
+            // 1. Kill FFmpeg immediately
             if (FfmpegProcess != null && !FfmpegProcess.HasExited)
             {
                 try { FfmpegProcess.Kill(); } catch {}
+                FfmpegProcess.Dispose();
             }
-                
+            
+            // 2. Return ALL memory to the pool
             foreach(var kvp in VideoBuffer)
+            {
                System.Buffers.ArrayPool<byte>.Shared.Return(kvp.Value.PixelData);
+            }
             VideoBuffer.Clear();
-
+            
+            // 3. Dispose GPU Textures
             if (RingTextures != null)
             {
                 foreach(var tex in RingTextures)
                     tex?.Dispose();
+                RingTextures = null;
             }
             VideoBatch?.Dispose();
+
+            // 4. Reset Counters
+            CurrentMemoryUsage = 0;
+            
+            GC.Collect();
             // --- END CLEANUP ---
 
             if (OnlineManager.Client != null)
