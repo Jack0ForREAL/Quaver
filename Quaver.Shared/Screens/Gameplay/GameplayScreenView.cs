@@ -1,3 +1,10 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
+*/
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -37,7 +44,6 @@ using Quaver.Shared.Screens.Results;
 using Quaver.Shared.Screens.Selection;
 using Quaver.Shared.Screens.Tournament.Gameplay;
 using Quaver.Shared.Skinning;
-using Quaver.Shared.Helpers;
 using Steamworks;
 using Wobble;
 using Wobble.Graphics;
@@ -101,6 +107,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
         // Config & State
         private long MaxRamUsageBytes;
+        private int DecoderThreadCount; // FIXED: Added missing variable
         private ConcurrentDictionary<int, DecodedFrame> VideoBuffer = new ConcurrentDictionary<int, DecodedFrame>();
         private CancellationTokenSource VideoLoaderToken = new CancellationTokenSource();
         private Process FfmpegProcess;
@@ -281,10 +288,11 @@ namespace Quaver.Shared.Screens.Gameplay
             }
 
             // 3. Get Info using Helper
-            var info = VideoUtils.GetVideoInfo(videoPath);
-            VideoWidth = info.width;
-            VideoHeight = info.height;
-            FrameTimeMs = info.frameTimeMs;
+            // FIXED: Use Deconstruction to safely get values even if names mismatch
+            var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
+            VideoWidth = width;
+            VideoHeight = height;
+            FrameTimeMs = frameTime;
             
             if (VideoWidth == 0) return; // Failed to parse
 
