@@ -244,15 +244,10 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private async void RunVideoLoaderMp4(CancellationToken token)
         {
-            // 1. STABILITY: Stop if in menu
             if (Screen.IsSongSelectPreview) return;
 
-            // 2. DOWNLOAD CHECK: Improved logic
-            bool hasFFmpeg = File.Exists(VideoUtils.FFmpegPath) || File.Exists("ffmpeg.exe");
-            if (!hasFFmpeg)
-            {
-                if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
-            }
+            // 1. Check for FFmpeg
+            if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
 
             var currentMap = MapManager.Selected.Value;
             if (currentMap == null) return;
@@ -262,7 +257,6 @@ namespace Quaver.Shared.Screens.Gameplay
             
             if (!File.Exists(videoPath))
             {
-                 // Try alternative
                  var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
                  var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
                  
@@ -275,30 +269,37 @@ namespace Quaver.Shared.Screens.Gameplay
                  }
             }
 
-            // 3. GET INFO
+            // 2. Get Original Info
             var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
-            
-            // OPTIMIZATION: Force 720p height to save CPU/RAM (Maintain Aspect Ratio)
-            // If video is smaller than 720p, we keep it.
-            int targetHeight = Math.Min(height, 720);
-            int targetWidth = (int)((float)targetHeight * ((float)width / height));
-            
-            // Ensure width is even (FFmpeg requirement)
-            if (targetWidth % 2 != 0) targetWidth++;
+            if (width == 0) return;
 
-            VideoWidth = targetWidth;
-            VideoHeight = targetHeight;
+            // 3. CALCULATE OPTIMIZED RESOLUTION
+            // If TargetHeight is 0, use original. Otherwise, clamp to target.
+            int targetH = ConfigManager.VideoModTargetHeight.Value;
+            if (targetH <= 0) targetH = height;
+            
+            // Don't upscale small videos
+            targetH = Math.Min(targetH, height);
+
+            // Calculate Width while maintaining Aspect Ratio
+            float aspect = (float)width / height;
+            int targetW = (int)(targetH * aspect);
+
+            // FFmpeg requires dimensions to be divisible by 2
+            if (targetW % 2 != 0) targetW++;
+            if (targetH % 2 != 0) targetH++;
+
+            VideoWidth = targetW;
+            VideoHeight = targetH;
             FrameTimeMs = frameTime;
-            
-            if (VideoWidth == 0) return; 
 
-            // 4. START FFMPEG
+            // 4. Start FFmpeg with Scaling
             try 
             {
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = VideoUtils.FFmpegPath,
-                    // FIX: Added scale filter for performance + RGBA for colors
+                    // OPTIMIZATION: -vf scale=W:H forces the video to be smaller/lighter
                     Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -f rawvideo -pix_fmt rgba -v quiet -",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -314,16 +315,15 @@ namespace Quaver.Shared.Screens.Gameplay
 
                 while (!token.IsCancellationRequested && !FfmpegProcess.HasExited)
                 {
-                    // FIX: Use Frame Count + Short Sleep for smoothness
+                    // Smoother sleep logic
                     if (VideoBuffer.Count >= maxFramesToBuffer)
                     {
-                        Thread.Sleep(1); // 1ms sleep = much smoother than 10ms
+                        Thread.Sleep(2);
                         continue;
                     }
 
                     byte[] data = System.Buffers.ArrayPool<byte>.Shared.Rent(frameSize);
                     
-                    // CRASH FIX: Wrap Read in Try/Catch
                     try 
                     {
                         int totalRead = 0;
@@ -348,7 +348,6 @@ namespace Quaver.Shared.Screens.Gameplay
                     }
                     catch 
                     {
-                        // Stream closed or cancelled
                         System.Buffers.ArrayPool<byte>.Shared.Return(data);
                         break;
                     }
