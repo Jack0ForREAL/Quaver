@@ -178,27 +178,29 @@ namespace Quaver.Shared.Screens.Options
                 }),
                 new OptionsSection("Gameplay", UserInterface.OptionsGameplay, new List<OptionsSubcategory>
                 {
-                // --- NEW VIDEO MOD SETTINGS ---
-                    new OptionsSubcategory("Video Backgrounds (Mod)", new List<OptionsItem>()
+                
+                new OptionsSubcategory("Video Backgrounds (Mod)", new List<OptionsItem>()
                     {
                         new OptionsItemCheckbox(containerRect, "Enable Video Backgrounds", ConfigManager.VideoModEnabled),
-                        
+                        // This is the NEW setting we added
+                        new OptionsItemCheckbox(containerRect, "Enable High Quality", ConfigManager.VideoModHighQuality)
+                        {
+                            Tooltip = "Uses 'video.mp4' (High) instead of 'video_low.mp4' (Low)."
+                        },
                         new OptionsItemCheckbox(containerRect, "Auto-Configure Performance", ConfigManager.VideoModAutoConfiguration)
                         {
-                            Tags = new List<string> {"cpu", "ram", "automatic", "optimize"}
+                             Tooltip = "Automatically sets RAM and Threads based on your hardware."
                         },
-                        
-                        new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i} MB")
+                        // These are the updated sliders with shorter text so they don't clip
+                        new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i}M")
                         {
                             Tags = new List<string> {"memory", "buffer", "cache"}
                         },
-                        
-                        new OptionsSlider(containerRect, "Decoder Threads", ConfigManager.VideoModDecoderThreads, i => $"{i} Threads")
+                        new OptionsSlider(containerRect, "Decoder Threads", ConfigManager.VideoModDecoderThreads, i => $"{i}")
                         {
                             Tags = new List<string> {"cpu", "cores", "multithreading", "lag"}
                         },
-                        
-                        new OptionsSlider(containerRect, "Preload Buffer", ConfigManager.VideoModPreloadSeconds, i => $"{i} Seconds")
+                        new OptionsSlider(containerRect, "Preload Buffer", ConfigManager.VideoModPreloadSeconds, i => $"{i}s")
                         {
                             Tags = new List<string> {"lookahead", "buffer", "loading"}
                         }
