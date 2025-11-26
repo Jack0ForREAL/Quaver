@@ -809,6 +809,8 @@ namespace Quaver.Shared.Config
         ///     Video Mod: How many seconds ahead to look.
         /// </summary>
         internal static BindableInt VideoModPreloadSeconds { get; private set; }
+
+        internal static BindableInt VideoModTargetHeight { get; private set; }
         
         internal static Bindable<bool> VideoModHighQuality { get; private set; }
  
@@ -1242,6 +1244,9 @@ namespace Quaver.Shared.Config
 
             // Preload Slider: Default = 3s. Min = 1s. Max = 30s.
             VideoModPreloadSeconds = ReadInt(@"VideoModPreloadSeconds", 3, 1, 30, data);
+
+            // Default 720p (Best balance). 0 = Native.
+            VideoModTargetHeight = ReadInt(@"VideoModTargetHeight", 720, 0, 2160, data);
 
             KeyLayouts = new();
             CoopKeyLayouts = new();
