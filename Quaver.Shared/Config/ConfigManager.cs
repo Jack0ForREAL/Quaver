@@ -808,7 +808,9 @@ namespace Quaver.Shared.Config
         ///     Video Mod: How many seconds ahead to look.
         /// </summary>
         internal static BindableInt VideoModPreloadSeconds { get; private set; }
-
+        
+        internal static Bindable<bool> VideoModHighQuality { get; private set; }
+ 
         [IgnoreWrite]
         internal static Dictionary<GameMode, List<Bindable<GenericKey>>> KeyLayouts { get; private set; }
 
@@ -1219,15 +1221,26 @@ namespace Quaver.Shared.Config
             PrioritizedGameMode = ReadValue(@"PrioritizedGameMode", (GameMode)0, data);
             
             // --- VIDEO MOD SETTINGS ---
+            
+            // 1. Detect Hardware Limits
+            int systemThreads = VideoUtils.GetCpuThreads();
+            int systemRam = VideoUtils.GetTotalRamMB();
+            
             VideoModEnabled = ReadValue(@"VideoModEnabled", true, data);
+            
+            // High Quality Mode (Defaults to ON for desktops, OFF if RAM < 4GB)
+            VideoModHighQuality = ReadValue(@"VideoModHighQuality", systemRam > 4096, data);
+
             VideoModAutoConfiguration = ReadValue(@"VideoModAutoConfiguration", true, data);
-            // Default: 1024MB (1GB) RAM, Min: 256MB, Max: 8192MB (8GB)
-            VideoModRamBudget = ReadInt(@"VideoModRamBudget", 1024, 256, 8192, data);
-            // Default: 2 Threads, Min: 1, Max: 16
-            VideoModDecoderThreads = ReadInt(@"VideoModDecoderThreads", 2, 1, 16, data);
-            // Default: 3 Seconds ahead, Min: 1, Max: 30
+
+            // RAM Slider: Default = 1GB. Min = 256MB. Max = Your actual System RAM.
+            VideoModRamBudget = ReadInt(@"VideoModRamBudget", 1024, 256, systemRam, data);
+
+            // Threads Slider: Default = 2. Min = 1. Max = Your actual CPU Threads.
+            VideoModDecoderThreads = ReadInt(@"VideoModDecoderThreads", 2, 1, systemThreads, data);
+
+            // Preload Slider: Default = 3s. Min = 1s. Max = 30s.
             VideoModPreloadSeconds = ReadInt(@"VideoModPreloadSeconds", 3, 1, 30, data);
-            // --------------------------
 
             KeyLayouts = new();
             CoopKeyLayouts = new();
