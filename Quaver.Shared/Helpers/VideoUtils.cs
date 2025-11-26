@@ -12,8 +12,8 @@ namespace Quaver.Shared.Helpers
 {
     public static class VideoUtils
     {
-        public static string FFmpegPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffmpeg.exe" : "ffmpeg";
-
+        public static string FFmpegPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, 
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffmpeg.exe" : "ffmpeg");
         //  HARDWARE DETECTION 
         public static int GetCpuThreads() => Environment.ProcessorCount;
 
