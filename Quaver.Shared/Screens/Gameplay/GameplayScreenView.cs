@@ -5,6 +5,7 @@ using System.Linq;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Quaver.API.Enums;
@@ -46,14 +47,6 @@ using Wobble.Screens;
 using Wobble.Window;
 using MathHelper = Microsoft.Xna.Framework.MathHelper;
 
-// OPTIMIZATION LIBRARIES
-using System.Buffers; 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
-using Color = Microsoft.Xna.Framework.Color; 
-using Rectangle = Microsoft.Xna.Framework.Rectangle; 
-
 namespace Quaver.Shared.Screens.Gameplay
 {
     public class GameplayScreenView : ScreenView
@@ -89,29 +82,31 @@ namespace Quaver.Shared.Screens.Gameplay
         private SpectatorCount SpectatorCount { get; }
         private ReplayController ReplayController { get; }
 
-        // --- ULTRA-OPTIMIZED VIDEO MOD ---
-        private class DecodedFrame
-        {
-            public int Index;
-            public byte[] PixelData; 
-            public int Width;
-            public int Height;
-        }
+        // --- OPTIMIZED VIDEO MOD VARIABLES ---
+        private struct DecodedFrame { public int Index; public byte[] PixelData; }
+        
+        private Texture2D[] RingTextures;
+        private int CurrentRingIndex = 0;
+        private int DrawRingIndex = -1;
 
-        // Live Configuration (Set in constructor)
+        private double VideoUpdateAccumulator = 0;
+        private ConcurrentStack<byte[]> FreeBufferPool = new ConcurrentStack<byte[]>();
+        private bool IsPoolInitialized = false;
+        
+        // Thread Safety: Ensure we don't access disposed objects
+        private AutoResetEvent PoolSignal;
+        private bool IsVideoDisposed = false;
+
         private long MaxRamUsageBytes;
         private int DecoderThreadCount;
-        private int LookAheadFrames;
-        
         private ConcurrentDictionary<int, DecodedFrame> VideoBuffer = new ConcurrentDictionary<int, DecodedFrame>();
-        private CancellationTokenSource LoaderCanceller = new CancellationTokenSource();
-        private SpriteBatch VideoBatch;
+        private CancellationTokenSource VideoLoaderToken = new CancellationTokenSource();
+        private Process FfmpegProcess;
         
-        private Texture2D VideoTexture; 
+        private SpriteBatch VideoBatch;
+        private int VideoWidth, VideoHeight;
+        private double FrameTimeMs;
         private int LastUploadedIndex = -1;
-        private double TimeSinceLastUpdate = 0;
-        private long CurrentMemoryUsage = 0;
-        // ---------------------------
 
         public GameplayScreenView(Screen screen) : base(screen)
         {
@@ -122,16 +117,20 @@ namespace Quaver.Shared.Screens.Gameplay
 
             CreateBackground();
 
-            // Init Video Batch
-            VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
-            
-            // --- CONFIGURE VIDEO SETTINGS ---
-            ConfigureVideoMod();
-
-            // Start the Background Loader if enabled
-            if (ConfigManager.VideoModEnabled.Value)
+            // SAFE INIT: Only initialize Video Batch if not in preview, wrap in try-catch
+            if (!Screen.IsSongSelectPreview)
             {
-                Task.Run(() => RunVideoLoader(LoaderCanceller.Token));
+                try {
+                    VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
+                    PoolSignal = new AutoResetEvent(false);
+                    ConfigureVideoMod();
+
+                    if (ConfigManager.VideoModEnabled.Value)
+                    {
+                        // FIX: Run on Task.Run to ensure constructor NEVER blocks/freezes menu
+                        Task.Run(() => RunVideoLoaderMp4(VideoLoaderToken.Token));
+                    }
+                } catch { /* Fail silently if video mod init crashes, allow game to load */ }
             }
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
@@ -239,137 +238,141 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private void ConfigureVideoMod()
         {
-            if (ConfigManager.VideoModAutoConfiguration.Value)
-            {
-                // --- AUTO CONFIGURATION (System Check) ---
-                int cpuCores = Environment.ProcessorCount;
-
-                if (cpuCores >= 12)
+            try {
+                if (ConfigManager.VideoModAutoConfiguration.Value)
                 {
-                    // High End
-                    MaxRamUsageBytes = 4096L * 1024 * 1024; // 4GB
-                    DecoderThreadCount = 4;
-                }
-                else if (cpuCores >= 6)
-                {
-                    // Mid Range
-                    MaxRamUsageBytes = 2048L * 1024 * 1024; // 2GB
-                    DecoderThreadCount = 2;
+                    int ram = VideoUtils.GetTotalRamMB();
+                    int threads = VideoUtils.GetCpuThreads();
+                    MaxRamUsageBytes = (long)(Math.Min(ram / 2, 4096)) * 1024 * 1024;
+                    DecoderThreadCount = Math.Clamp(threads / 2, 1, 4);
                 }
                 else
                 {
-                    // Low End / Laptop
-                    MaxRamUsageBytes = 512L * 1024 * 1024; // 512MB
-                    DecoderThreadCount = 1;
+                    MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
+                    DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
                 }
-                LookAheadFrames = 30 * 4; // 4 seconds
-            }
-            else
-            {
-                // --- CUSTOM CONFIGURATION ---
-                MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
-                DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
-                LookAheadFrames = 30 * ConfigManager.VideoModPreloadSeconds.Value;
+            } catch {
+                MaxRamUsageBytes = 1024 * 1024 * 1024; // Default 1GB
+                DecoderThreadCount = 2;
             }
         }
 
-        // --- BACKGROUND THREAD: SMART MEMORY LOADER ---
-        private void RunVideoLoader(CancellationToken token)
+        private async Task RunVideoLoaderMp4(CancellationToken token)
         {
+            // Extra safety: never run in preview
+            if (Screen.IsSongSelectPreview) return;
+
             try 
             {
+                if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
+
                 var currentMap = MapManager.Selected.Value;
                 if (currentMap == null) return;
-
-                var songsFolder = ConfigManager.SongDirectory.Value;
-                var mapFolder = currentMap.Directory;
-                var videoPath = Path.Combine(songsFolder, mapFolder, "video");
-
-                if (!Directory.Exists(videoPath)) return;
-
-                // Ensure we respect the thread limit
-                var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = DecoderThreadCount };
-
-                while (!token.IsCancellationRequested)
+                
+                var fileName = ConfigManager.VideoModHighQuality.Value ? "video.mp4" : "video_low.mp4";
+                var videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
+                
+                if (!File.Exists(videoPath))
                 {
-                    if (AudioEngine.Track == null || AudioEngine.Track.IsDisposed)
+                    var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
+                    var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
+                    if (File.Exists(otherPath)) videoPath = otherPath;
+                    else return;
+                }
+
+                // This call is synchronous, so we run it inside this Task to avoid UI Freeze
+                var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
+                if (width == 0) return;
+
+                // 1. RESOLUTION LOGIC
+                int targetH = ConfigManager.VideoModTargetHeight.Value;
+                if (targetH <= 0) targetH = height;
+                targetH = Math.Min(targetH, height);
+                float aspect = (float)width / height;
+                int targetW = (int)(targetH * aspect);
+
+                if (targetW % 2 != 0) targetW++;
+                if (targetH % 2 != 0) targetH++;
+
+                VideoWidth = targetW;
+                VideoHeight = targetH;
+                FrameTimeMs = frameTime;
+
+                // 2. POOL INIT (16-bit)
+                int frameSize = VideoWidth * VideoHeight * 2; 
+
+                long totalRamAvailable = MaxRamUsageBytes;
+                int maxFramesByRam = (int)(totalRamAvailable / frameSize);
+                int maxFramesByTime = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
+                int bufferCount = Math.Max(10, Math.Min(maxFramesByRam, maxFramesByTime));
+
+                for (int i = 0; i < bufferCount; i++)
+                    FreeBufferPool.Push(new byte[frameSize]);
+                    
+                IsPoolInitialized = true;
+
+                // 3. FFMPEG START
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = VideoUtils.FFmpegPath,
+                    // RGB565le for 16-bit color
+                    Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -f rawvideo -pix_fmt rgb565le -v quiet -",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    CreateNoWindow = true
+                };
+
+                FfmpegProcess = Process.Start(startInfo);
+                var stream = FfmpegProcess.StandardOutput.BaseStream;
+                int frameIndex = 0;
+
+                while (!token.IsCancellationRequested && !FfmpegProcess.HasExited && !IsVideoDisposed)
+                {
+                    if (FreeBufferPool.IsEmpty)
                     {
-                        Thread.Sleep(50);
+                        // Wait for signal safely
+                        try { PoolSignal?.WaitOne(100); } catch {}
                         continue;
                     }
 
-                    var time = AudioEngine.Track.Time;
-                    int startFrame = (int)(Math.Max(0, time) / 33.333f);
-                    int endFrame = startFrame + LookAheadFrames; 
-
-                    Parallel.For(startFrame, endFrame, parallelOptions, i =>
+                    if (!FreeBufferPool.TryPop(out byte[] data)) continue;
+                    
+                    try 
                     {
-                        if (token.IsCancellationRequested) return;
-                        
-                        // 1. Budget Check
-                        if (Interlocked.Read(ref CurrentMemoryUsage) >= MaxRamUsageBytes) return;
-                        
-                        if (VideoBuffer.ContainsKey(i)) return; 
-
-                        var file = Path.Combine(videoPath, $"frame{i}.jpg");
-                        if (File.Exists(file))
+                        int totalRead = 0;
+                        while (totalRead < frameSize)
                         {
-                            try 
-                            {
-                                using (var image = SixLabors.ImageSharp.Image.Load<Rgba32>(file))
-                                {
-                                    // 2. ARRAY POOLING
-                                    int byteCount = image.Width * image.Height * 4;
-                                    byte[] rentedArray = ArrayPool<byte>.Shared.Rent(byteCount);
-                                    
-                                    image.CopyPixelDataTo(rentedArray);
-                                    
-                                    var frame = new DecodedFrame 
-                                    { 
-                                        Index = i, 
-                                        PixelData = rentedArray,
-                                        Width = image.Width,
-                                        Height = image.Height
-                                    };
-                                    
-                                    if (VideoBuffer.TryAdd(i, frame))
-                                    {
-                                        Interlocked.Add(ref CurrentMemoryUsage, byteCount);
-                                    }
-                                    else
-                                    {
-                                        ArrayPool<byte>.Shared.Return(rentedArray);
-                                    }
-                                }
-                            }
-                            catch { }
+                            int read = await stream.ReadAsync(data, totalRead, frameSize - totalRead, token);
+                            if (read == 0) break; 
+                            totalRead += read;
                         }
-                    });
 
-                    // Cleanup old frames
-                    var keys = VideoBuffer.Keys.ToList();
-                    foreach(var k in keys)
-                    {
-                        // Remove frames that are behind
-                        if (k < startFrame - 10)
+                        if (totalRead < frameSize) 
                         {
-                            if (VideoBuffer.TryRemove(k, out var oldFrame))
-                            {
-                                int byteCount = oldFrame.Width * oldFrame.Height * 4;
-                                Interlocked.Add(ref CurrentMemoryUsage, -byteCount);
-                                
-                                // Return to pool
-                                ArrayPool<byte>.Shared.Return(oldFrame.PixelData);
-                            }
+                            FreeBufferPool.Push(data);
+                            break; 
+                        }
+
+                        var frame = new DecodedFrame { Index = frameIndex++, PixelData = data };
+                        if (!VideoBuffer.TryAdd(frame.Index, frame))
+                        {
+                            FreeBufferPool.Push(data);
                         }
                     }
-
-                    Thread.Sleep(15);
+                    catch 
+                    {
+                        FreeBufferPool.Push(data);
+                        break;
+                    }
                 }
             }
-            catch (Exception e)
+            catch (Exception e) { LogVideoError(e.Message); }
+            finally 
             {
-                LogVideoError("Loader Crash: " + e.Message);
+                if (FfmpegProcess != null && !FfmpegProcess.HasExited)
+                {
+                    try { FfmpegProcess.Kill(); } catch {}
+                }
             }
         }
 
@@ -381,38 +384,55 @@ namespace Quaver.Shared.Screens.Gameplay
             } catch {}
         }
 
-        // --- MAIN THREAD: ZERO-LAG UPDATE ---
-        private void UpdateVideoTexture(GameTime gameTime)
+        private void UpdateAndUploadVideoTexture()
         {
-            TimeSinceLastUpdate += gameTime.ElapsedGameTime.TotalMilliseconds;
-            if (TimeSinceLastUpdate < 30.0) return; 
-            TimeSinceLastUpdate = 0;
-
-            if (AudioEngine.Track == null) return;
+            if (IsVideoDisposed || AudioEngine.Track == null || VideoWidth == 0 || FrameTimeMs == 0) return;
 
             var time = AudioEngine.Track.Time;
-            int currentFrameIndex = (int)(Math.Max(0, time) / 33.333f);
+            int currentFrameIndex = (int)(Math.Max(0, time) / FrameTimeMs);
 
             if (currentFrameIndex == LastUploadedIndex) return;
 
-            DecodedFrame frameToDraw = null;
-            if (VideoBuffer.TryGetValue(currentFrameIndex, out var exact)) frameToDraw = exact;
-            else if (VideoBuffer.TryGetValue(currentFrameIndex - 1, out var prev)) frameToDraw = prev;
-
-            if (frameToDraw != null)
+            if (!VideoBuffer.TryRemove(currentFrameIndex, out var frameToUpload))
             {
-                try 
+                // Cleanup old frames safely
+                foreach (var key in VideoBuffer.Keys)
                 {
-                    if (VideoTexture == null || VideoTexture.Width != frameToDraw.Width || VideoTexture.Height != frameToDraw.Height)
+                    if (key < currentFrameIndex)
                     {
-                        VideoTexture?.Dispose();
-                        VideoTexture = new Texture2D(GameBase.Game.GraphicsDevice, frameToDraw.Width, frameToDraw.Height);
+                        if (VideoBuffer.TryRemove(key, out var oldFrame))
+                        {
+                            FreeBufferPool.Push(oldFrame.PixelData);
+                            try { PoolSignal?.Set(); } catch {}
+                        }
                     }
-
-                    VideoTexture.SetData(frameToDraw.PixelData, 0, frameToDraw.Width * frameToDraw.Height * 4);
-                    LastUploadedIndex = currentFrameIndex;
                 }
-                catch { }
+                return;
+            }
+            
+            try
+            {
+                if (RingTextures == null)
+                {
+                    RingTextures = new Texture2D[3];
+                    for (int i = 0; i < 3; i++)
+                        // Bgr565 for 16-bit
+                        RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, SurfaceFormat.Bgr565);
+                }
+
+                RingTextures[CurrentRingIndex].SetData(frameToUpload.PixelData, 0, VideoWidth * VideoHeight * 2);
+                DrawRingIndex = CurrentRingIndex;
+                CurrentRingIndex = (CurrentRingIndex + 1) % 3;
+                LastUploadedIndex = currentFrameIndex;
+            }
+            catch { }
+            finally
+            {
+                if (IsPoolInitialized)
+                {
+                    FreeBufferPool.Push(frameToUpload.PixelData);
+                    try { PoolSignal?.Set(); } catch {}
+                }
             }
         }
 
@@ -425,8 +445,18 @@ namespace Quaver.Shared.Screens.Gameplay
             Screen.Ruleset?.Update(gameTime);
             Container?.Update(gameTime);
 
-            if (ConfigManager.VideoModEnabled.Value)
-                UpdateVideoTexture(gameTime);
+            // Only run video logic if enabled AND batch is valid
+            if (ConfigManager.VideoModEnabled.Value && VideoBatch != null && !IsVideoDisposed)
+            {
+                double targetInterval = 1000.0 / ConfigManager.VideoModUpdateRate.Value;
+                VideoUpdateAccumulator += gameTime.ElapsedGameTime.TotalMilliseconds;
+                if (VideoUpdateAccumulator >= targetInterval)
+                {
+                    UpdateAndUploadVideoTexture();
+                    VideoUpdateAccumulator %= targetInterval; 
+                    if (VideoUpdateAccumulator > targetInterval) VideoUpdateAccumulator = 0;
+                }
+            }
 
             UpdateGradeDisplay();
 
@@ -441,17 +471,31 @@ namespace Quaver.Shared.Screens.Gameplay
         {
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
 
-            if (ConfigManager.VideoModEnabled.Value && VideoTexture != null && !VideoTexture.IsDisposed)
-            {
-                if (Background != null) Background.Alpha = 0;
+            bool drawnVideo = false;
 
-                VideoBatch.Begin();
-                int w = GameBase.Game.GraphicsDevice.Viewport.Width;
-                int h = GameBase.Game.GraphicsDevice.Viewport.Height;
-                VideoBatch.Draw(VideoTexture, new Rectangle(0, 0, w, h), Color.White);
-                VideoBatch.End();
+            if (ConfigManager.VideoModEnabled.Value && !IsVideoDisposed && VideoBatch != null && DrawRingIndex != -1 && RingTextures != null && RingTextures[DrawRingIndex] != null)
+            {
+                try
+                {
+                    if (Background != null) Background.Alpha = 0;
+
+                    var currentTexture = RingTextures[DrawRingIndex];
+                    
+                    VideoBatch.Begin();
+                    int w = GameBase.Game.GraphicsDevice.Viewport.Width;
+                    int h = GameBase.Game.GraphicsDevice.Viewport.Height;
+                    VideoBatch.Draw(currentTexture, new Rectangle(0, 0, w, h), Color.White);
+                    VideoBatch.End();
+                    drawnVideo = true;
+                }
+                catch 
+                {
+                    // Fallback if draw fails
+                    drawnVideo = false;
+                }
             }
-            else
+            
+            if (!drawnVideo && Background != null)
             {
                 Background.Draw(gameTime);
             }
@@ -463,16 +507,27 @@ namespace Quaver.Shared.Screens.Gameplay
 
         public override void Destroy()
         {
-            LoaderCanceller.Cancel();
+            IsVideoDisposed = true;
+            VideoLoaderToken.Cancel();
+            try { PoolSignal?.Set(); } catch {}
             
-            foreach(var kvp in VideoBuffer)
+            if (FfmpegProcess != null && !FfmpegProcess.HasExited)
             {
-               ArrayPool<byte>.Shared.Return(kvp.Value.PixelData);
+                try { FfmpegProcess.Kill(); } catch {}
             }
-            VideoBuffer.Clear();
             
-            VideoTexture?.Dispose();
-            if (VideoBatch != null) VideoBatch.Dispose();
+            VideoBuffer.Clear();
+            FreeBufferPool.Clear(); 
+
+            if (RingTextures != null)
+            {
+                foreach(var tex in RingTextures)
+                    try { tex?.Dispose(); } catch {}
+            }
+            try { VideoBatch?.Dispose(); } catch {}
+            try { PoolSignal?.Dispose(); } catch {}
+            
+            GC.Collect();
 
             if (OnlineManager.Client != null)
                 OnlineManager.Client.OnGameEnded -= OnGameEnded;
@@ -481,24 +536,17 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Destroy();
         }
 
-        // ... (The rest of your Helper Functions remain exactly the same) ...
         private void CreateBackground()
         {
             var background = BackgroundHelper.RawTexture;
-
-            if (background == null)
-                background = UserInterface.MenuBackgroundClear;
-
+            if (background == null) background = UserInterface.MenuBackgroundClear;
             Background = new BackgroundImage(background, 100 - ConfigManager.BackgroundBrightness.Value, false);
         }
 
         private void CreateProgressBar()
         {
-            if (!ConfigManager.DisplaySongTimeProgress.Value)
-                return;
-
+            if (!ConfigManager.DisplaySongTimeProgress.Value) return;
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width, 4), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0,
                 skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor)
             {
@@ -510,11 +558,8 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private void CreateMiniProgressBar()
         {
-            if (!ConfigManager.DisplaySongTimeProgress.Value)
-                return;
-
+            if (!ConfigManager.DisplaySongTimeProgress.Value) return;
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width / SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayWidthFactor, SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayHeight), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0,
                 skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor, true)
             {
@@ -529,7 +574,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateScoreDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             ScoreDisplay = new GameplayNumberDisplay(NumberDisplayType.Score, StringHelper.ScoreToString(0),
                 new Vector2(skin.ScoreDisplayScale / 100f, skin.ScoreDisplayScale / 100f))
             {
@@ -543,7 +587,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateRatingDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             RatingDisplay = new GameplayNumberDisplay(NumberDisplayType.Rating, StringHelper.RatingToString(0),
                 new Vector2(skin.RatingDisplayScale / 100f, skin.RatingDisplayScale / 100f))
             {
@@ -557,7 +600,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateAccuracyDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             AccuracyDisplay = new GameplayNumberDisplay(NumberDisplayType.Accuracy, StringHelper.AccuracyToString(0),
                 new Vector2(skin.AccuracyDisplayScale / 100f, skin.AccuracyDisplayScale / 100f))
             {
@@ -571,7 +613,6 @@ namespace Quaver.Shared.Screens.Gameplay
         public void UpdateScoreAndAccuracyDisplays()
         {
             ScoreDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Score);
-
             RatingDisplay.UpdateValue(RatingProcessor.CalculateRating(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy));
             if (ConfigManager.DisplayRankedAccuracy.Value || Screen.IsSpectatingTournament)
                 AccuracyDisplay.UpdateValue(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy);
@@ -582,7 +623,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateKeysPerSecondDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             KpsDisplay = new KeysPerSecond(NumberDisplayType.Score, "0", new Vector2(skin.KpsDisplayScale / 100f, skin.KpsDisplayScale / 100f))
             {
                 Parent = Container,
@@ -603,7 +643,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateScoreboards()
         {
             var scoreboardName = Screen.InReplayMode ? Screen.LoadedReplay.PlayerName : ConfigManager.Username.Value;
-
             var selfAvatar = ConfigManager.Username.Value == scoreboardName ? SteamManager.GetAvatarOrUnknown(SteamUser.GetSteamID().m_SteamID)
                 : UserInterface.UnknownAvatar;
 
