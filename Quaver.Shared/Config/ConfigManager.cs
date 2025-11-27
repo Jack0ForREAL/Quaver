@@ -787,7 +787,11 @@ namespace Quaver.Shared.Config
         ///     Video Mod: Enable or Disable video backgrounds entirely.
         /// </summary>
         internal static Bindable<bool> VideoModEnabled { get; private set; }
-
+        /// <summary>
+        ///     Video Mod: How many times per second to update the texture (Hz).
+        ///     Lowering this to monitor refresh rate (e.g., 60) saves massive CPU/PCI-E bandwidth.
+        /// </summary>
+        internal static BindableInt VideoModUpdateRate { get; private set; }
         /// <summary>
         ///     Video Mod: If true, ignores custom settings and calculates best values based on CPU core count.
         /// </summary>
@@ -1248,6 +1252,9 @@ namespace Quaver.Shared.Config
             // Default 720p (Best balance). 0 = Native.
             VideoModTargetHeight = ReadInt(@"VideoModTargetHeight", 720, 0, 2160, data);
 
+            // Default to 60Hz updates. 1000Hz (Unlimited) is wasteful for video.
+            VideoModUpdateRate = ReadInt(@"VideoModUpdateRate", 60, 30, 1000, data);
+            
             KeyLayouts = new();
             CoopKeyLayouts = new();
             ScratchKeyLayouts = new();
