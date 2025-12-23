@@ -41,800 +41,197 @@ namespace Quaver.Shared.Config
 {
     public static class ConfigManager
     {
-        /// <summary>
-        ///     These are all values that should never ben
-        /// </summary>
         private static string _gameDirectory;
         internal static Bindable<string> GameDirectory { get; private set; }
-
-        /// <summary>
-        ///     The skin directory
-        /// </summary>
         private static string _skinDirectory;
         internal static Bindable<string> SkinDirectory { get; private set; }
-
-        /// <summary>
-        ///     The screenshot directory
-        /// </summary>
         private static string _screenshotDirectory;
         internal static Bindable<string> ScreenshotDirectory { get; private set; }
-
-        /// <summary>
-        ///     The replay directory
-        /// </summary>
         private static string _replayDirectory;
         internal static Bindable<string> ReplayDirectory { get; private set; }
-
-        /// <summary>
-        ///     The Logs directory
-        /// </summary>
         private static string _logsDirectory;
         internal static Bindable<string> LogsDirectory { get; private set; }
-
-        /// <summary>
-        ///     The data directory
-        /// </summary>
         private static string _dataDirectory;
         internal static Bindable<string> DataDirectory { get; private set; }
-
-        /// <summary>
-        ///     The temp directory
-        /// </summary>
         internal static string BackupDirectory => Path.Join(DataDirectory.Value, "Backups");
-
-        /// <summary>
-        ///     The temp directory
-        /// </summary>
         internal static string MapBackupDirectory => Path.Join(BackupDirectory, "Maps");
-
-        /// <summary>
-        ///     The temp directory
-        /// </summary>
         internal static string TempDirectory => Path.Join(DataDirectory.Value, "Temp");
-
-        /// <summary>
-        ///     The song directory
-        /// </summary>
         private static string _songDirectory;
         internal static Bindable<string> SongDirectory { get; private set; }
-
-        /// <summary>
-        ///     The directory of the Steam workshop
-        /// </summary>
         private static string _steamWorkshopDirectory;
         internal static Bindable<string> SteamWorkshopDirectory { get; private set; }
-
-        /// <summary>
-        ///     The username of the user.
-        /// </summary>
         internal static Bindable<string> Username { get; private set; }
-
-        /// <summary>
-        ///     The skin in the Skins directory that is loaded. Default is the only exception, as it'll be overrided.
-        /// </summary>
         internal static Bindable<string> Skin { get; private set; }
-
-        /// <summary>
-        ///     The default skin that will be loaded if the skin property is blank
-        /// </summary>
         internal static Bindable<DefaultSkins> DefaultSkin { get; private set; }
-
-        /// <summary>
-        ///     The default editor skin that will be loaded if the skin property is blank
-        /// </summary>
         internal static Bindable<DefaultSkins?> DefaultEditorSkin { get; private set; }
-
-        /// <summary>
-        ///     The master volume of the game.
-        /// </summary>
         internal static BindableInt VolumeGlobal { get; private set; }
-
-        /// <summary>
-        ///     The SFX volume of the game.
-        /// </summary>
         internal static BindableInt VolumeEffect { get; private set; }
-
-        /// <summary>
-        ///     The Music volume of the gamne.
-        /// </summary>
         internal static BindableInt VolumeMusic { get; private set; }
-
-        /// <summary>
-        ///     The BASS device period.
-        /// </summary>
         internal static BindableInt DevicePeriod { get; private set; }
-
-        /// <summary>
-        ///     The BASS device buffer length divided by DevicePeriod.
-        /// </summary>
         internal static BindableInt DeviceBufferLengthMultiplier { get; private set; }
-
-        /// <summary>
-        ///     The dim for backgrounds during gameplay
-        /// </summary>
         internal static BindableInt BackgroundBrightness { get; private set; }
-
-        /// <summary>
-        ///     The height of the window.
-        /// </summary>
         internal static BindableInt WindowHeight { get; private set; }
-
-        /// <summary>
-        ///     The width of the window.
-        /// </summary>
         internal static BindableInt WindowWidth { get; private set; }
-
-        /// <summary>
-        ///     Is the window fullscreen?
-        /// </summary>
         internal static Bindable<bool> WindowFullScreen { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> WindowBorderless { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt PlayfieldScale { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> PreferWayland { get; private set; }
-
-        /// <summary>
-        ///     Should the game display the FPS Counter?
-        /// </summary>
         internal static Bindable<bool> FpsCounter { get; private set; }
-
-        /// <summary>
-        ///     The type of FPS limiter that is activated
-        /// </summary>
         internal static Bindable<FpsLimitType> FpsLimiterType { get; private set; }
-
-        /// <summary>
-        ///     The custom value for FPS limiting
-        /// </summary>
         internal static BindableInt CustomFpsLimit { get; private set; }
-
-        /// <summary>
-        ///     Whether to use frame time or audio time for notes.
-        /// </summary>
         internal static Bindable<bool> SmoothAudioTimingGameplay { get; private set; }
-
-        /// <summary>
-        ///     When an audio starts to play, its <see cref="Quaver.Shared.Audio.AudioEngine.Track.Time"/>
-        ///     will stay 0 for some time. This causes the gameplay to freeze for a while.
-        ///     By turning this on, audio starts a bit early (amount determined at start). We then slowly
-        ///     Let the gameplay timing reach the actual audio time.
-        /// </summary>
         internal static Bindable<bool> SmoothAudioStart { get; private set; }
-
-        /// <summary>
-        ///     Determines if we should show the song time progress display in the
-        ///     gameplay screen.
-        /// </summary>
         internal static Bindable<bool> DisplaySongTimeProgress { get; private set; }
-
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, BindableInt> ScrollSpeeds { get; private set; }
-
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, Bindable<ScrollDirection>> ScrollDirections { get; private set; }
-
-        /// <summary>
-        ///     Percentage of scaling applied when changing rates
-        /// </summary>
+        [IgnoreWrite] internal static Dictionary<GameMode, BindableInt> ScrollSpeeds { get; private set; }
+        [IgnoreWrite] internal static Dictionary<GameMode, Bindable<ScrollDirection>> ScrollDirections { get; private set; }
         internal static BindableInt NormaliseScrollVelocityByRatePercentage { get; private set; }
-
-        /// <summary>
-        ///     The offset of the notes compared to the song start.
-        /// </summary>
         internal static BindableInt GlobalAudioOffset { get; private set; }
-
-        /// <summary>
-        ///     Dictates whether or not the song audio is pitched while using the ManiaModSpeed gameplayModifier.
-        /// </summary>
         internal static Bindable<bool> Pitched { get; private set; }
-
-        /// <summary>
-        ///     The path of the osu!.db file
-        /// </summary>
         internal static Bindable<string> OsuDbPath { get; private set; }
-
-        /// <summary>
-        ///     The path of the etterna cache.db file
-        /// </summary>
         internal static Bindable<string> EtternaDbPath { get; private set; }
-
-        /// <summary>
-        ///     Dictates where or not we should load osu! maps from osu!.db on game start
-        /// </summary>
         internal static Bindable<bool> AutoLoadOsuBeatmaps { get; private set; }
-
-        /// <summary>
-        ///     Delete the original mapset file after importing
-        /// </summary>
         internal static Bindable<bool> DeleteOriginalFileAfterImport { get; private set; }
-
-        /// <summary>
-        ///     Enable the Discord Rich Presence
-        /// </summary>
         internal static Bindable<bool> DiscordRichPresence { get; private set; }
-
-        /// <summary>
-        ///     If the scoreboard is currently visible.
-        /// </summary>
         internal static Bindable<bool> ScoreboardVisible { get; private set; }
-
-        /// <summary>
-        ///     Display the ranked accuracy in gameplay instead of the custom judgement windows accuracy
-        /// </summary>
         internal static Bindable<bool> DisplayRankedAccuracy { get; private set; }
-
-        /// <summary>
-        ///     Display the ranked accuracy for local leaderboards instead of the custom judgement windows accuracy
-        /// </summary>
         internal static Bindable<bool> LeaderboardRankedAccuracy { get; private set; }
-
-        /// <summary>
-        ///     If true, the hitlighting will be tinted to the judgement color in the skin
-        /// </summary>
         internal static Bindable<bool> TintHitLightingBasedOnJudgementColor { get; private set; }
-
-        /// <summary>
-        ///     Dictates how to order the mapsets during song select.Get
-        /// </summary>
         internal static Bindable<OrderMapsetsBy> SelectOrderMapsetsBy { get; private set; }
-
-        /// <summary>
-        ///     Dictates how to group mapsets in song select
-        /// </summary>
         internal static Bindable<GroupMapsetsBy> SelectGroupMapsetsBy { get; private set; }
-
-        /// <summary>
-        ///     Dictates how to filter song select mpas
-        /// </summary>
         internal static Bindable<GameMode> SelectFilterGameModeBy { get; private set; }
-
-        /// <summary>
-        ///     The currently selected game mode.
-        /// </summary>
         internal static Bindable<GameMode> SelectedGameMode { get; private set; }
-
-        /// <summary>
-        ///     The type of leaderboard that is displayed during song select.
-        /// </summary>
         internal static Bindable<LeaderboardType> LeaderboardSection { get; private set; }
-
-        /// <summary>
-        ///     If true, the user will be auto logged into the server.
-        /// </summary>
         internal static Bindable<bool> AutoLoginToServer { get; private set; }
-
-        /// <summary>
-        ///     If true, timing lines will be displayed during gameplay
-        /// </summary>
         internal static Bindable<bool> DisplayTimingLines { get; private set; }
-
-        /// <summary>
-        ///     If true, hit bubbles will be displayed during gameplay
-        /// </summary>
         internal static Bindable<bool> DisplayHitBubbles { get; private set; }
-
-        /// <summary>
-        ///     If true, the audio visualizer in the menus will be displayed.
-        /// </summary>
         internal static Bindable<bool> DisplayMenuAudioVisualizer { get; private set; }
-
-        /// <summary>
-        ///     If true, hitsounds in gameplay will be played.
-        /// </summary>
         internal static Bindable<bool> EnableHitsounds { get; private set; }
-
-        /// <summary>
-        ///     If true, a hitsound will be played when releasing a long note
-        /// </summary>
         internal static Bindable<bool> EnableLongNoteReleaseHitsounds { get; private set; }
-
-        /// <summary>
-        ///     If true, keysounds in gameplay will be played.
-        /// </summary>
         internal static Bindable<bool> EnableKeysounds { get; private set; }
-
-        /// <summary>
-        ///     If enabled, the user will be able to tap to pause instead of having to hold for 500ms to pause.
-        /// </summary>
         internal static Bindable<bool> TapToPause { get; private set; }
-
-        /// <summary>
-        ///     If enabled, the user will be able to continue playing the map when dying, but with No Fail mod enabled.
-        /// </summary>
         internal static Bindable<bool> KeepPlayingUponFailing { get; private set; }
-
-        /// <summary>
-        ///     If enabled, the user will be able to tap to restart instead of having to hold for 200ms to restart.
-        /// </summary>
         internal static Bindable<bool> TapToRestart { get; private set; }
-
-        /// <summary>
-        ///     The top lane cover's adjustable height between levels 0-50
-        /// </summary>
         internal static BindableInt LaneCoverTopHeight { get; private set; }
-
-        /// <summary>
-        ///     The bottom lane cover's adjustable height between levels 0-50
-        /// </summary>
         internal static BindableInt LaneCoverBottomHeight { get; private set; }
-
-        /// <summary>
-        ///     If enabled, gameplay will have a top lane cover using the adjustable height.
-        /// </summary>
         internal static Bindable<bool> LaneCoverTop { get; private set; }
-
-        /// <summary>
-        ///     If enabled, gameplay will have a bottom lane cover using the adjustable height.
-        /// </summary>
         internal static Bindable<bool> LaneCoverBottom { get; private set; }
-
-        /// <summary>
-        ///     If enabled, the lane covers will be displayed under the ui elements.
-        /// </summary>
         internal static Bindable<bool> UIElementsOverLaneCover { get; private set; }
-
-        /// <summary>
-        ///     If enabled, the receptors will be displayed over the lane cover.
-        /// </summary>
         internal static Bindable<bool> ReceptorsOverLaneCover { get; private set; }
-
-        /// <summary>
-        ///     If enabled, failed scores will not show in local scores.
-        /// </summary>
         internal static Bindable<bool> DisplayFailedLocalScores { get; private set; }
-
-        /// <summary>
-        ///	    If enabled, automatically skip the beta splash screen.
-        /// </summary>
         internal static Bindable<bool> SkipSplashScreen { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayComboAlerts { get; private set; }
-
-        /// <summary>
-        ///     Scaling of ImGui windows and texts
-        /// </summary>
         internal static BindableInt EditorPlayfieldAlpha { get; private set; }
-
-        /// <summary>
-        ///     Scaling of ImGui windows and texts
-        /// </summary>
         internal static BindableInt EditorImGuiScalePercentage { get; private set; }
-
-        /// <summary>
-        ///     The scroll speed used in the editor.
-        /// </summary>
         internal static BindableInt EditorScrollSpeedKeys { get; private set; }
-
-        /// <summary>
-        ///     Whether to snap notes when livemapping
-        /// </summary>
         internal static Bindable<bool> EditorLiveMapSnap { get; private set; }
-
-        /// <summary>
-        ///     The offset applied to every hit objects placed by livemapping
-        /// </summary>
         internal static BindableInt EditorLiveMapOffset { get; private set; }
-
-        /// <summary>
-        ///     Whether long notes can be placed when live mapping
-        /// </summary>
         internal static Bindable<bool> EditorLiveMapLongNote { get; private set; }
-
-        /// <summary>
-        ///     Minimum time needed to press the key to place a long note when live mapping
-        /// </summary>
         internal static BindableInt EditorLiveMapLongNoteThreshold { get; private set; }
-
-        /// <summary>
-        ///     Whether or not to play hitsounds in the editor.
-        /// </summary>
         internal static Bindable<bool> EditorEnableHitsounds { get; private set; }
-
-        /// <summary>
-        ///     Whether or not to play keysounds in the editor.
-        /// </summary>
         internal static Bindable<bool> EditorEnableKeysounds { get; private set; }
-
-        /// <summary>
-        ///     The type of beat snap colors that'll be displayed in the editor.
-        /// </summary>
         internal static Bindable<EditorBeatSnapColor> EditorBeatSnapColorType { get; private set; }
-
-        /// <summary>
-        ///     Whether or not the user only wants to display measure lines while editing.
-        /// </summary>
         internal static Bindable<bool> EditorOnlyShowMeasureLines { get; private set; }
-
-        /// <summary>
-        ///     Whether or not the user would like to display the lines that divide the lanes.
-        /// </summary>
         internal static Bindable<bool> EditorShowLaneDividerLines { get; private set; }
-
-        /// <summary>
-        ///     Anchors HitObjects to the middle, so the snap lines are in the middle of the object.
-        /// </summary>
         internal static Bindable<bool> EditorHitObjectsMidpointAnchored { get; private set; }
-
-        /// <summary>
-        ///     Whether or jot the user wants to play the metronome in the editor
-        /// </summary>
         internal static Bindable<bool> EditorPlayMetronome { get; private set; }
-
-        /// <summary>
-        ///     If the metronome in the editor will play half beats.
-        /// </summary>
         internal static Bindable<bool> EditorMetronomePlayHalfBeats { get; private set; }
-
-        /// <summary>
-        ///     If true, it'll display the numbers for the song time progress
-        /// </summary>
         internal static Bindable<bool> DisplaySongTimeProgressNumbers { get; private set; }
-
-        /// <summary>
-        ///
-        /// </summary>
         internal static Bindable<bool> DisplayJudgementCounter { get; private set; }
-
-        /// <summary>
-        /// The amount of time in milliseconds a hit in the hiterror takes to disappear
-        /// </summary>
         internal static BindableInt HitErrorFadeTime { get; private set; }
-
-        /// <summary></summary>
-        ///     If true, the user will skip the results screen after quitting the game.
-        /// </summary>
         internal static Bindable<bool> SkipResultsScreenAfterQuit { get; private set; }
-
-        /// <summary>
-        /// If true, the windows key is locked during gameplay
-        /// </summary>
         internal static Bindable<bool> LockWinkeyDuringGameplay { get; private set; }
-
-        /// <summary>
-        ///     If true, it'll use hitobjects specifically for viewing layers in the editor.
-        /// </summary>
         internal static Bindable<HitObjectColoring> EditorObjectColoring { get; private set; }
-
-        /// <summary>
-        ///     If true, SV editor lines will be colored by their timing group
-        /// </summary>
         internal static Bindable<bool> EditorColorSvLineByTimingGroup { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> LobbyFilterHasPassword { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> LobbyFilterFullGame { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> LobbyFilterOwnsMap { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> LobbyFilterHasFriends { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EnableBattleRoyaleBackgroundFlashing { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EnableBattleRoyaleAlerts { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayUnbeatableScoresDuringGameplay { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> ShowSpectators { get; private set; }
-
-        /// <summary>
-        ///     The selected judgement window preset
-        /// </summary>
         internal static Bindable<string> JudgementWindows { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<OrderMapsetsBy> MusicPlayerOrderMapsBy { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<OnlineUserListFilter> OnlineUserListFilterType { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayFriendOnlineNotifications { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplaySongRequestNotifications { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<MultiplayerLobbyRuleset> MultiplayerLobbyRulesetType { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<MultiplayerLobbyGameMode> MultiplayerLobbyGameModeType { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<MultiplayerLobbyMapStatus> MultiplayerLobbyMapStatusType { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<MultiplayerLobbyRoomVisibility> MultiplayerLobbyVisibilityType { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> UseSteamWorkshopSkin { get; private set; }
-
-        /// <summary>
-        /// </summary>
-        /// <returns></returns>
         internal static Bindable<bool> LowerFpsOnWindowInactive { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DownloadDisplayOwnedMapsets { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DownloadDisplayExplicitMapsets { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DownloadReverseSort { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayNotificationsBottomToTop { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt SelectedProfileId { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorBackgroundBrightness { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorHitsoundVolume { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorScaleSpeedWithRate { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<EditorPlayfieldWaveformFilter> EditorAudioFilter { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorShowWaveform { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorShowSpectrogram { get; private set; }
-
         internal static Bindable<int> EditorSpectrogramMaximumFrequency { get; private set; }
-
         internal static Bindable<int> EditorSpectrogramMinimumFrequency { get; private set; }
-
         internal static Bindable<float> EditorSpectrogramCutoffFactor { get; private set; }
-
         internal static Bindable<float> EditorSpectrogramIntensityFactor { get; private set; }
-
         internal static Bindable<EditorPlayfieldSpectrogramFrequencyScale> EditorSpectrogramFrequencyScale { get; private set; }
-
         internal static BindableInt EditorSpectrogramFftSize { get; private set; }
-
-        /// <summary>
-        ///     The number of times the song's fft will be taken. Linearly increases the time to load
-        /// </summary>
         internal static BindableInt EditorSpectrogramInterleaveCount { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<EditorPlayfieldWaveformAudioDirection> EditorAudioDirection { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorWaveformColorR { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorWaveformColorG { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorWaveformColorB { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorWaveformBrightness { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorSpectrogramBrightness { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorPlaceObjectsOnNearestTick { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorLiveMapping { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorInvertBeatSnapScroll { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt EditorLongNoteOpacity { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt GameplayNoteScale { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EditorDisplayGameplayPreview { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<string> EditorNoteSkin { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static BindableInt VisualOffset { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> Display1v1TournamentOverlay { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> TournamentDisplay1v1PlayfieldScores { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> ReloadSkinOnChange { get; private set; }
-
-        /// <summary>
-        /// </summary>
-        
-        //this was removed somewhat recently, keeping as a comment to keep the door open for reimplementation in the future
-        //internal static Bindable<bool> EnableRealtimeOnlineScoreboard { get; private set; }
-
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, Bindable<bool>> ScratchLanesLeft { get; private set; }
-
-        /// <summary>
-        /// </summary>
+        [IgnoreWrite] internal static Dictionary<GameMode, Bindable<bool>> ScratchLanesLeft { get; private set; }
         internal static Bindable<bool> AcceptedTermsAndPrivacyPolicy { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayGameplayOverlay { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> EnableHighProcessPriority { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayNotificationsInGameplay { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayPauseWarning { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<bool> DisplayFailWarning { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<string> TournamentPlayer2Skin { get; private set; }
-
-        /// <summary>
-        ///     Keybinding for leftward navigation.
-        /// </summary>
         internal static Bindable<Keys> KeyNavigateLeft { get; private set; }
-
-        /// <summary>
-        ///     Keybinding for rightward navigation.
-        /// </summary>
         internal static Bindable<Keys> KeyNavigateRight { get; private set; }
-
-        /// <summary>
-        ///     Keybinding for upward navigation.
-        /// </summary>
         internal static Bindable<Keys> KeyNavigateUp { get; private set; }
-
-        /// <summary>
-        ///     Keybinding for downward navigation.
-        /// </summary>
         internal static Bindable<Keys> KeyNavigateDown { get; private set; }
-
-        /// <summary>
-        ///     Keybinding for backward navigation.
-        /// </summary>
         internal static Bindable<Keys> KeyNavigateBack { get; private set; }
-
-        /// <summary>
-        ///     Keybinding for selection in navigation interface.
-        /// </summary>
         internal static Bindable<Keys> KeyNavigateSelect { get; private set; }
-        /// <summary>
-        ///     Video Mod: Enable or Disable video backgrounds entirely.
-        /// </summary>
+
+        // --- VIDEO MOD VARIABLES ---
         internal static Bindable<bool> VideoModEnabled { get; private set; }
-        /// <summary>
-        ///     Video Mod: How many times per second to update the texture (Hz).
-        ///     Lowering this to monitor refresh rate (e.g., 60) saves massive CPU/PCI-E bandwidth.
-        /// </summary>
-        internal static BindableInt VideoModUpdateRate { get; private set; }
-        /// <summary>
-        ///     Video Mod: If true, ignores custom settings and calculates best values based on CPU core count.
-        /// </summary>
         internal static Bindable<bool> VideoModAutoConfiguration { get; private set; }
-
-        /// <summary>
-        ///     Video Mod: Maximum RAM (in Megabytes) to use for buffering frames. 
-        ///     Higher = Smoother playback but uses more system memory.
-        /// </summary>
         internal static BindableInt VideoModRamBudget { get; private set; }
-
-        /// <summary>
-        ///     Video Mod: How many CPU threads to use for decoding JPGs.
-        ///     Higher = Faster loading, but might stutter gameplay if too high.
-        /// </summary>
         internal static BindableInt VideoModDecoderThreads { get; private set; }
-
-        /// <summary>
-        ///     Video Mod: How many seconds ahead to look.
-        /// </summary>
         internal static BindableInt VideoModPreloadSeconds { get; private set; }
-
         internal static BindableInt VideoModTargetHeight { get; private set; }
-        
         internal static Bindable<bool> VideoModHighQuality { get; private set; }
- 
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, List<Bindable<GenericKey>>> KeyLayouts { get; private set; }
+        internal static BindableInt VideoModUpdateRate { get; private set; }
+        // ---------------------------
 
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, List<Bindable<GenericKey>>> CoopKeyLayouts { get; private set; }
-
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, List<Bindable<GenericKey>>> ScratchKeyLayouts { get; private set; }
+        [IgnoreWrite] internal static Dictionary<GameMode, List<Bindable<GenericKey>>> KeyLayouts { get; private set; }
+        [IgnoreWrite] internal static Dictionary<GameMode, List<Bindable<GenericKey>>> CoopKeyLayouts { get; private set; }
+        [IgnoreWrite] internal static Dictionary<GameMode, List<Bindable<GenericKey>>> ScratchKeyLayouts { get; private set; }
 
         internal static GenericKey DefaultKeyLayout(GameMode mode, int index)
         {
             var keyCount = ModeHelper.ToKeyCount(mode);
             var half = keyCount / 2;
-
             var keys = new[] { Keys.A, Keys.S, Keys.D, Keys.F, Keys.V, Keys.B, Keys.H, Keys.J, Keys.K, Keys.L };
             var middleKey = Keys.Space;
-
             if (keyCount % 2 != 0 && index == half)
                 return new GenericKey() { KeyboardKey = middleKey };
             else if (index <= half - 1)
@@ -843,186 +240,55 @@ namespace Quaver.Shared.Config
                 return new GenericKey() { KeyboardKey = keys[^(keyCount - index)] };
         }
 
-        /// <summary>
-        ///     The key pressed to pause and menu-back.
-        /// </summary>
         internal static Bindable<GenericKey> KeyPause { get; private set; }
-
-        /// <summary>
-        ///     The key pressed to skip the song introduction
-        /// </summary>
         internal static Bindable<GenericKey> KeySkipIntro { get; private set; }
-
-        /// <summary>
-        ///     The key to toggle the overlay
-        /// </summary>
         internal static Bindable<Keys> KeyToggleOverlay { get; private set; }
-
-        /// <summary>
-        ///     The key to toggle the mirror mod while in song select
-        /// </summary>
         internal static Bindable<Keys> KeyToggleMirror { get; private set; }
-
-        /// <summary>
-        ///     The key to decrease the gameplay rate while in song select
-        /// </summary>
         internal static Bindable<Keys> KeyDecreaseGameplayAudioRate { get; private set; }
-
-        /// <summary>
-        ///     The key to increase the gameplay rate while in song select
-        /// </summary>
         internal static Bindable<Keys> KeyIncreaseGameplayAudioRate { get; private set; }
-
-        /// <summary>
-        ///     The key pressed to restart the map.
-        /// </summary>
         internal static Bindable<Keys> KeyRestartMap { get; private set; }
-
-        /// <summary>
-        ///     The keys to increase/decrease scroll speed.
-        /// </summary>
         internal static Bindable<Keys> KeyIncreaseScrollSpeed { get; private set; }
         internal static Bindable<Keys> KeyDecreaseScrollSpeed { get; private set; }
-
-        /// <summary>
-        ///     The keys to increase/decrease map offset.
-        /// </summary>
         internal static Bindable<Keys> KeyIncreaseMapOffset { get; private set; }
         internal static Bindable<Keys> KeyDecreaseMapOffset { get; private set; }
-        
         internal static Bindable<Keys> KeyResetMapOffset { get; private set; }
-
-        /// <summary>
-        ///     The keys to toggle autoplay during playtesting
-        /// </summary>
         internal static Bindable<Keys> KeyTogglePlaytestAutoplay { get; private set; }
-
-        /// <summary>
-        ///     The key to hide the scoreboard in-game.
-        /// </summary>
         internal static Bindable<Keys> KeyScoreboardVisible { get; private set; }
-
-        /// <summary>
-        ///     The key to quickly exit the map.
-        /// </summary>
         internal static Bindable<Keys> KeyQuickExit { get; private set; }
-
-        /// <summary>
-        ///     The key to pause/play the track in the editor.
-        /// </summary>
         internal static Bindable<Keys> KeyEditorPausePlay { get; private set; }
-
-        /// <summary>
-        ///     The key to lower the audio rate in the editor.
-        /// </summary>
         internal static Bindable<Keys> KeyEditorDecreaseAudioRate { get; private set; }
-
-        /// <summary>
-        ///     The key to increase the audio rate in the editor.
-        /// </summary>
         internal static Bindable<Keys> KeyEditorIncreaseAudioRate { get; private set; }
-
-        /// <summary>
-        ///     Whether global scrolling is inverted.
-        /// </summary>
         internal static Bindable<bool> InvertScrolling { get; private set; }
-
-        /// <summary>
-        ///     Whether scrolling in editor is inverted.
-        /// </summary>
         internal static Bindable<bool> InvertEditorScrolling { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<Keys> KeyScreenshot { get; private set; }
-
-        /// <summary>
-        /// </summary>
         internal static Bindable<ResultGraphs> ResultGraph { get; private set; }
-
         internal static Bindable<string> AudioOutputDevice { get; private set; }
-
-        /// <summary>
-        ///     Target difficulty used for selecting a default map in a mapset.
-        ///     Stored as an integer, divide by 10 for actual target difficulty.
-        /// </summary>
-        [IgnoreWrite]
-        internal static Dictionary<GameMode, BindableInt> PrioritizedMapDifficulty { get; private set; }
-
-        /// <summary>
-        ///     Prioritize which keymode when selecting a default map in a mapset.
-        /// </summary>
+        [IgnoreWrite] internal static Dictionary<GameMode, BindableInt> PrioritizedMapDifficulty { get; private set; }
         internal static Bindable<GameMode> PrioritizedGameMode { get; private set; }
+        [IgnoreWrite] private static bool FirstWrite { get; set; }
+        [IgnoreWrite] private static long LastWrite { get; set; }
 
-        /// <summary>
-        ///     Dictates whether or not this is the first write of the file for the current game session.
-        ///     (Not saved in Config)
-        /// </summary>
-        [IgnoreWrite]
-        private static bool FirstWrite { get; set; }
-
-        /// <summary>
-        ///     The last time we've wrote config.
-        /// </summary>
-        [IgnoreWrite]
-        private static long LastWrite { get; set; }
-
-        /// <summary>
-        ///     Important!
-        ///     Responsible for initializing directory properties,
-        ///     writing a new config file if it doesn't exist and also reading config files.
-        ///     This should be the one of the first things that is called upon game launch.
-        /// </summary>
         public static void Initialize()
         {
-            // When initializing, we manually set the directory fields rather than the props,
-            // because we only want to write the config file one time at this stage.
-            // Usually when a property is modified, it will automatically write the config file again,
-            // so that's what we're preventing here.
             _gameDirectory = Directory.GetCurrentDirectory();
-
-            _skinDirectory = _gameDirectory + "/Skins";
-            Directory.CreateDirectory(_skinDirectory);
-
-            _screenshotDirectory = _gameDirectory + "/Screenshots";
-            Directory.CreateDirectory(_screenshotDirectory);
-
-            _logsDirectory = _gameDirectory + "/Logs";
-            Directory.CreateDirectory(_logsDirectory);
-
-            _replayDirectory = _gameDirectory + "/Replays";
-            Directory.CreateDirectory(_replayDirectory);
-
-            _dataDirectory = _gameDirectory + "/Data";
-            Directory.CreateDirectory(_dataDirectory);
-            Directory.CreateDirectory(_dataDirectory + "/r/");
-
-            _songDirectory = _gameDirectory + "/Songs";
-            Directory.CreateDirectory(_songDirectory);
-
+            _skinDirectory = _gameDirectory + "/Skins"; Directory.CreateDirectory(_skinDirectory);
+            _screenshotDirectory = _gameDirectory + "/Screenshots"; Directory.CreateDirectory(_screenshotDirectory);
+            _logsDirectory = _gameDirectory + "/Logs"; Directory.CreateDirectory(_logsDirectory);
+            _replayDirectory = _gameDirectory + "/Replays"; Directory.CreateDirectory(_replayDirectory);
+            _dataDirectory = _gameDirectory + "/Data"; Directory.CreateDirectory(_dataDirectory); Directory.CreateDirectory(_dataDirectory + "/r/");
+            _songDirectory = _gameDirectory + "/Songs"; Directory.CreateDirectory(_songDirectory);
             Directory.CreateDirectory($"{WobbleGame.WorkingDirectory}/Plugins");
             Directory.CreateDirectory($"{WobbleGame.WorkingDirectory}/Tournament");
-
-            // If we already have a config file, we'll just want to read that.
             ReadConfigFile();
             Logger.Important("Config file has been successfully read.", LogType.Runtime);
         }
 
-        /// <summary>
-        ///     Reads a quaver.cfg file and sets all of the successfully read values.
-        ///     At the end of reading, we write the config file, changing any invalid data/
-        /// </summary>
         private static void ReadConfigFile()
         {
             var configFilePath = _gameDirectory + "/quaver.cfg";
-
             if (File.Exists(configFilePath))
             {
-                try
-                {
-                    // Delete the config file if we catch an exception.
-                    var _ = new IniFileParser.IniFileParser(new ConcatenateDuplicatedKeysIniDataParser()).ReadFile(configFilePath)["Config"];
-                }
+                try { var _ = new IniFileParser.IniFileParser(new ConcatenateDuplicatedKeysIniDataParser()).ReadFile(configFilePath)["Config"]; }
                 catch (ParsingException)
                 {
                     Logger.Important("Config file couldn't be read.", LogType.Runtime);
@@ -1030,10 +296,6 @@ namespace Quaver.Shared.Config
                     File.Delete(configFilePath);
                 }
             }
-
-            // We'll want to write a quaver.cfg file if it doesn't already exist.
-            // There's no need to read the config file afterwards, since we already have
-            // all of the default values.
             if (!File.Exists(configFilePath))
             {
                 File.WriteAllText(configFilePath, "; Quaver Configuration File");
@@ -1042,9 +304,6 @@ namespace Quaver.Shared.Config
 
             var data = new IniFileParser.IniFileParser(new ConcatenateDuplicatedKeysIniDataParser()).ReadFile(configFilePath, Encoding.UTF8)["Config"];
 
-            // Read / Set Config Values
-            // NOTE: MAKE SURE TO SET THE VALUE TO AUTO-SAVE WHEN CHANGING! THIS ISN'T DONE AUTOMATICALLY.
-            // YOU CAN DO THIS DOWN BELOW, AFTER THE CONFIG HAS WRITTEN FOR THE FIRST TIME.
             GameDirectory = ReadSpecialConfigType(SpecialConfigType.Directory, @"GameDirectory", _gameDirectory, data);
             SkinDirectory = ReadSpecialConfigType(SpecialConfigType.Directory, @"SkinDirectory", _skinDirectory, data);
             ScreenshotDirectory = ReadSpecialConfigType(SpecialConfigType.Directory, @"ScreenshotDirectory", _screenshotDirectory, data);
@@ -1214,7 +473,6 @@ namespace Quaver.Shared.Config
             Display1v1TournamentOverlay = ReadValue(@"Display1v1TournamentOverlay", true, data);
             TournamentDisplay1v1PlayfieldScores = ReadValue(@"TournamentDisplay1v1PlayfieldScores", true, data);
             ReloadSkinOnChange = ReadValue(@"ReloadSkinOnChange", false, data);
-            //EnableRealtimeOnlineScoreboard = ReadValue(@"EnableRealtimeOnlineScoreboard", false, data);
             AcceptedTermsAndPrivacyPolicy = ReadValue(@"AcceptedTermsAndPrivacyPolicy", false, data);
             SkipSplashScreen = ReadValue(@"SkipSplashScreen", false, data);
             DisplayGameplayOverlay = ReadValue(@"DisplayGameplayOverlay", true, data);
@@ -1228,33 +486,15 @@ namespace Quaver.Shared.Config
             PrioritizedGameMode = ReadValue(@"PrioritizedGameMode", (GameMode)0, data);
             
             // --- VIDEO MOD SETTINGS ---
-            
-            // 1. Detect Hardware Limits
-            int systemThreads = VideoUtils.GetCpuThreads();
-            int systemRam = VideoUtils.GetTotalRamMB();
-            
             VideoModEnabled = ReadValue(@"VideoModEnabled", true, data);
-            
-            // High Quality Mode (Defaults to ON for desktops, OFF if RAM < 4GB)
-            VideoModHighQuality = ReadValue(@"VideoModHighQuality", systemRam > 4096, data);
-
+            VideoModHighQuality = ReadValue(@"VideoModHighQuality", VideoUtils.GetTotalRamMB() > 4096, data);
             VideoModAutoConfiguration = ReadValue(@"VideoModAutoConfiguration", true, data);
-
-            // RAM Slider: Default = 1GB. Min = 256MB. Max = Your actual System RAM.
-            VideoModRamBudget = ReadInt(@"VideoModRamBudget", 1024, 256, systemRam, data);
-
-            // Threads Slider: Default = 2. Min = 1. Max = Your actual CPU Threads.
-            VideoModDecoderThreads = ReadInt(@"VideoModDecoderThreads", 2, 1, systemThreads, data);
-
-            // Preload Slider: Default = 3s. Min = 1s. Max = 30s.
+            VideoModRamBudget = ReadInt(@"VideoModRamBudget", 1024, 256, VideoUtils.GetTotalRamMB(), data);
+            VideoModDecoderThreads = ReadInt(@"VideoModDecoderThreads", 2, 1, VideoUtils.GetCpuThreads(), data);
             VideoModPreloadSeconds = ReadInt(@"VideoModPreloadSeconds", 3, 1, 30, data);
-
-            // Default 720p (Best balance). 0 = Native.
             VideoModTargetHeight = ReadInt(@"VideoModTargetHeight", 720, 0, 2160, data);
-
-            // Default to 60Hz updates. 1000Hz (Unlimited) is wasteful for video.
             VideoModUpdateRate = ReadInt(@"VideoModUpdateRate", 60, 30, 1000, data);
-            
+
             KeyLayouts = new();
             CoopKeyLayouts = new();
             ScratchKeyLayouts = new();
@@ -1265,7 +505,6 @@ namespace Quaver.Shared.Config
             for (var keyCount = 1; keyCount <= ModeHelper.MaxKeyCount; keyCount++)
             {
                 var mode = ModeHelper.FromKeyCount(keyCount);
-
                 KeyLayouts.Add(mode, new List<Bindable<GenericKey>>());
                 CoopKeyLayouts.Add(mode, new List<Bindable<GenericKey>>());
                 for (var key = 1; key <= keyCount; key++)
@@ -1273,64 +512,32 @@ namespace Quaver.Shared.Config
                     KeyLayouts[mode].Add(ReadGenericKey($"KeyMania{keyCount}K{key}", DefaultKeyLayout(mode, key - 1), data));
                     CoopKeyLayouts[mode].Add(ReadGenericKey($"KeyCoop2P{keyCount}K{key}", new GenericKey() { KeyboardKey = Keys.None }, data));
                 }
-
                 ScratchKeyLayouts.Add(mode, new List<Bindable<GenericKey>>
                 {
                     ReadGenericKey($"KeyScratch{keyCount}K1", new GenericKey() { KeyboardKey = Keys.None }, data),
                     ReadGenericKey($"KeyScratch{keyCount}K2", new GenericKey() { KeyboardKey = Keys.None }, data)
                 });
-
                 PrioritizedMapDifficulty.Add(mode, ReadInt($"PrioritizedMapDifficulty{keyCount}K", 0, 0, 1000, data));
-
                 ScrollSpeeds.Add(mode, ReadInt($"ScrollSpeed{keyCount}K", 150, 50, 1000, data));
-
                 ScrollDirections.Add(mode, ReadValue($"ScrollDirection{keyCount}K", ScrollDirection.Down, data));
-
                 ScratchLanesLeft.Add(mode, ReadValue($"ScratchLaneLeft{keyCount}K", true, data));
             }
-
-            // Bind global inverted scrolling so ScrollContainers get InvertScrolling setting too
             ScrollContainer.GlobalInvertedScrolling = InvertScrolling;
-
-            // Have to do this manually.
             if (string.IsNullOrEmpty(Username.Value))
                 Username.Value = "Player";
-
             WriteConfigFileAsync().Wait();
         }
 
-        /// <summary>
-        ///     Reads a Bindable<T>. Works on all types.
-        /// </summary>
-        /// <returns></returns>
         private static Bindable<T> ReadValue<T>(string name, T defaultVal, KeyDataCollection ini)
         {
             var binded = new Bindable<T>(name, defaultVal);
             var converter = TypeDescriptor.GetConverter(typeof(T));
-
-            // Attempt to parse the value and default it if it can't.
-            try
-            {
-                binded.Value = (T)converter.ConvertFromString(null, CultureInfo.InvariantCulture, ini[name]);
-            }
-            catch (Exception e)
-            {
-                binded.Value = defaultVal;
-            }
-
+            try { binded.Value = (T)converter.ConvertFromString(null, CultureInfo.InvariantCulture, ini[name]); }
+            catch (Exception) { binded.Value = defaultVal; }
             binded.ValueChanged += AutoSaveConfiguration;
             return binded;
         }
 
-        /// <summary>
-        ///     Reads an Int32 to a BindableInt
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="defaultVal"></param>
-        /// <param name="min"></param>
-        /// <param name="max"></param>
-        /// <param name="ini"></param>
-        /// <returns></returns>
         private static BindableInt ReadInt(string name, int defaultVal, int min, int max, KeyDataCollection ini)
         {
             var binded = new BindableInt(name, defaultVal, min, max);
@@ -1339,77 +546,39 @@ namespace Quaver.Shared.Config
             return binded;
         }
 
-        /// <summary>
-        ///     Reads a special configuration string type. These values need to be read and written in a
-        ///     certain way.
-        /// </summary>
-        /// <returns></returns>
         private static Bindable<string> ReadSpecialConfigType(SpecialConfigType type, string name, string defaultVal, KeyDataCollection ini)
         {
             var binded = new Bindable<string>(name, defaultVal);
-
             try
             {
-                // Get parsed config value.
                 var parsedVal = ini[name];
-
                 switch (type)
                 {
                     case SpecialConfigType.Directory:
-                        if (Directory.Exists(parsedVal))
-                            binded.Value = parsedVal;
-                        else
-                        {
-                            // Make sure the default directory is created.
-                            Directory.CreateDirectory(defaultVal);
-                            binded.Value = defaultVal;
-                        }
-
+                        if (Directory.Exists(parsedVal)) binded.Value = parsedVal;
+                        else { Directory.CreateDirectory(defaultVal); binded.Value = defaultVal; }
                         break;
                     case SpecialConfigType.Path:
                         binded.Value = File.Exists(parsedVal) ? parsedVal : defaultVal;
                         break;
-                    case SpecialConfigType.Skin:
-                        break;
-                    default:
-                        binded.Value = defaultVal;
-                        break;
+                    default: binded.Value = defaultVal; break;
                 }
             }
-            catch (Exception e)
-            {
-                binded.Value = defaultVal;
-            }
-
+            catch (Exception) { binded.Value = defaultVal; }
             binded.ValueChanged += AutoSaveConfiguration;
             return binded;
         }
 
-        /// <summary>
-        ///     Reads a Bindable<GenericKey>.
-        /// </summary>
-        /// <returns></returns>
         private static Bindable<GenericKey> ReadGenericKey(string name, GenericKey defaultVal, KeyDataCollection ini)
         {
             var binded = new Bindable<GenericKey>(name, defaultVal);
-
-            GenericKey key;
-
-            if (GenericKey.TryParse(ini[name], out key))
-                binded.Value = key;
-
+            if (GenericKey.TryParse(ini[name], out var key)) binded.Value = key;
             binded.ValueChanged += AutoSaveConfiguration;
             return binded;
         }
 
-        /// <summary>
-        ///     Config Autosave functionality for Bindable<T>
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="d"></param>
         private static void AutoSaveConfiguration<T>(object sender, BindableValueChangedEventArgs<T> d)
         {
-            // ReSharper disable once ArrangeMethodOrOperatorBody
             CommonTaskScheduler.Add(CommonTask.WriteConfig);
         }
 
@@ -1423,136 +592,57 @@ namespace Quaver.Shared.Config
                     sb.AppendLine($"KeyMania{keyCount}K{key} = {KeyLayouts[mode][key - 1].Value}");
                     sb.AppendLine($"KeyCoop2P{keyCount}K{key} = {CoopKeyLayouts[mode][key - 1].Value}");
                 }
-
                 sb.AppendLine($"KeyScratch{keyCount}K1 = {ScratchKeyLayouts[mode][0].Value}");
                 sb.AppendLine($"KeyScratch{keyCount}K2 = {ScratchKeyLayouts[mode][1].Value}");
-
                 sb.AppendLine($"PrioritizedMapDifficulty{keyCount}K = {PrioritizedMapDifficulty[mode].Value}");
-
                 sb.AppendLine($"ScrollSpeed{keyCount}K = {ScrollSpeeds[mode].Value}");
                 sb.AppendLine($"ScrollDirection{keyCount}K = {ScrollDirections[mode].Value}");
-
                 sb.AppendLine($"ScratchLaneLeft{keyCount}K = {ScratchLanesLeft[mode].Value}");
             }
         }
 
-        /// <summary>
-        ///     Takes all of the current values from the ConfigManager class and creates a file with them.
-        ///     This will automatically be called whenever a configuration value is changed in the code.
-        /// </summary>
         internal static async Task WriteConfigFileAsync()
         {
-            // Tracks the number of attempts to write the file it has made.
             var attempts = 0;
-
             var sb = new StringBuilder();
-
-            // Top file information
-            // sb.AppendLine("; Quaver Configuration File");
             sb.AppendLine("; Last Updated On: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine();
             sb.AppendLine("[Config]");
             sb.AppendLine("; Quaver Configuration Values");
 
-            // For every line we want to append "PropName = PropValue" to the string
             foreach (var prop in typeof(ConfigManager).GetProperties(BindingFlags.Static | BindingFlags.NonPublic))
             {
-                if (prop.GetCustomAttribute<IgnoreWriteAttribute>() != null)
-                    continue;
-
-                try
-                {
-                    sb.AppendLine(prop.Name + " = " + prop.GetValue(null));
-                }
-                catch (Exception e)
-                {
-                    sb.AppendLine(prop.Name + " = ");
-                }
+                if (prop.GetCustomAttribute<IgnoreWriteAttribute>() != null) continue;
+                try { sb.AppendLine(prop.Name + " = " + prop.GetValue(null)); }
+                catch (Exception) { sb.AppendLine(prop.Name + " = "); }
             }
-
             WriteKeySpecific(sb);
 
             try
             {
-                // Create a new stream
-                var sw = new StreamWriter(_gameDirectory + "/quaver.cfg")
-                {
-                    AutoFlush = true
-                };
-
-                // Write to file and close it.;
-                await sw.WriteLineAsync(sb.ToString());
-                sw.Close();
-
+                using (var sw = new StreamWriter(_gameDirectory + "/quaver.cfg")) { await sw.WriteLineAsync(sb.ToString()); }
                 FirstWrite = false;
-            }
-            catch (Exception e)
-            {
-                // Try to write the file again 3 times.
-                while (attempts != 2)
-                {
-                    attempts++;
-
-                    // Create a new stream
-                    var sw = new StreamWriter(_gameDirectory + "/quaver.cfg")
-                    {
-                        AutoFlush = true
-                    };
-
-                    // Write to file and close it.
-                    await sw.WriteLineAsync(sb.ToString());
-                    sw.Close();
-                }
-
-                // If too many attempts were made.
-                if (attempts == 2)
-                    Logger.Error("Too many write attempts to the config file have been made.", LogType.Runtime);
-            }
-
-            LastWrite = GameBase.Game?.TimeRunning ?? -1;
-        }
-
-        /// <summary>
-        ///     Checks if the file is ready to be written to.
-        /// </summary>
-        /// <param name="sFilename"></param>
-        /// <returns></returns>
-        public static bool IsFileReady(string sFilename)
-        {
-            // If the file can be opened for exclusive access it means that the file
-            // is no longer locked by another process.
-            try
-            {
-                using (var inputStream = File.Open(sFilename, FileMode.Open, FileAccess.Read, FileShare.None))
-                    return (inputStream.Length > 0);
             }
             catch (Exception)
             {
-                return false;
+                while (attempts != 2)
+                {
+                    attempts++;
+                    using (var sw = new StreamWriter(_gameDirectory + "/quaver.cfg")) { await sw.WriteLineAsync(sb.ToString()); }
+                }
+                if (attempts == 2) Logger.Error("Too many write attempts to the config file have been made.", LogType.Runtime);
             }
+            LastWrite = GameBase.Game?.TimeRunning ?? -1;
+        }
+
+        public static bool IsFileReady(string sFilename)
+        {
+            try { using (var inputStream = File.Open(sFilename, FileMode.Open, FileAccess.Read, FileShare.None)) return (inputStream.Length > 0); }
+            catch (Exception) { return false; }
         }
     }
 
-    /// <summary>
-    ///     Enum containing special config types. We want to read and default these in
-    ///     a very particular way.
-    /// </summary>
-    internal enum SpecialConfigType
-    {
-        Directory,
-        Path,
-        Skin
-    }
-
-    /// <summary>
-    ///     Enum containing a number representation of the default skins we have available
-    /// </summary>
-    public enum DefaultSkins
-    {
-        Arrow,
-        Bar,
-        Circle,
-    }
-
+    internal enum SpecialConfigType { Directory, Path, Skin }
+    public enum DefaultSkins { Arrow, Bar, Circle }
     internal sealed class IgnoreWriteAttribute : Attribute { }
 }
