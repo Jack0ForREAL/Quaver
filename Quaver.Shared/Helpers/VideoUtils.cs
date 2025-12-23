@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -12,7 +13,6 @@ namespace Quaver.Shared.Helpers
 {
     public static class VideoUtils
     {
-        // FIX: Use BaseDirectory to look exactly where Quaver.exe is located
         public static string FFmpegPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, 
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffmpeg.exe" : "ffmpeg");
 
@@ -32,18 +32,38 @@ namespace Quaver.Shared.Helpers
 
         public static async Task<bool> CheckOrDownloadFFmpeg()
         {
-            // Check using the FIXED path
-            if (File.Exists(FFmpegPath) || (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && CheckLinuxFFmpeg())) 
+            // 1. Check if file exists AND is valid (larger than 1MB)
+            if (File.Exists(FFmpegPath))
+            {
+                var info = new FileInfo(FFmpegPath);
+                if (info.Length > 1024 * 1024) // If bigger than 1MB, assume it's good
+                {
+                    return true;
+                }
+                
+                // If we get here, file is corrupt/empty. Delete it.
+                try { File.Delete(FFmpegPath); } catch {}
+            }
+            
+            // Linux check
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && CheckLinuxFFmpeg()) 
                 return true;
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return false;
 
+            // 2. Download Logic
             try
             {
                 NotificationManager.Show(NotificationLevel.Info, "Downloading Video Component (FFmpeg)...", null, false);
                 
+                // FORCE TLS 1.2/1.3 (Fixes connection drops)
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
+
                 using (var client = new HttpClient())
                 {
+                    // FAKE BROWSER HEADERS (Fixes 403 Forbidden)
+                    client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+
                     var url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
                     var zipBytes = await client.GetByteArrayAsync(url);
                     var zipPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg_temp.zip");
@@ -67,9 +87,9 @@ namespace Quaver.Shared.Helpers
                     return true;
                 }
             }
-            catch 
+            catch (Exception e)
             {
-                NotificationManager.Show(NotificationLevel.Error, "Auto-Download failed. Please install FFmpeg manually.", null, true);
+                NotificationManager.Show(NotificationLevel.Error, "Auto-Download failed: " + e.Message, null, true);
                 return false;
             }
         }
