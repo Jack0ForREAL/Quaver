@@ -219,8 +219,8 @@ namespace Quaver.Shared.Config
         internal static BindableInt VideoModPreloadSeconds { get; private set; }
         internal static BindableInt VideoModTargetHeight { get; private set; }
         internal static Bindable<bool> VideoModHighQuality { get; private set; }
-        internal static BindableInt VideoModUpdateRate { get; private set; }
-        // ---------------------------
+        internal static Bindable<bool> VideoModUse32Bit { get; private set; }
+        internal static Bindable<bool> VideoModDebug { get; private set; }
 
         [IgnoreWrite] internal static Dictionary<GameMode, List<Bindable<GenericKey>>> KeyLayouts { get; private set; }
         [IgnoreWrite] internal static Dictionary<GameMode, List<Bindable<GenericKey>>> CoopKeyLayouts { get; private set; }
@@ -493,8 +493,9 @@ namespace Quaver.Shared.Config
             VideoModDecoderThreads = ReadInt(@"VideoModDecoderThreads", 2, 1, VideoUtils.GetCpuThreads(), data);
             VideoModPreloadSeconds = ReadInt(@"VideoModPreloadSeconds", 3, 1, 30, data);
             VideoModTargetHeight = ReadInt(@"VideoModTargetHeight", 720, 0, 2160, data);
-            VideoModUpdateRate = ReadInt(@"VideoModUpdateRate", 60, 30, 1000, data);
-
+            VideoModUse32Bit = ReadValue(@"VideoModUse32Bit", false, data);
+            VideoModDebug = ReadValue(@"VideoModDebug", false, data);
+            
             KeyLayouts = new();
             CoopKeyLayouts = new();
             ScratchKeyLayouts = new();
