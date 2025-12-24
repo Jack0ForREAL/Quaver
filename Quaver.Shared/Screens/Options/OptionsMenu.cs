@@ -25,104 +25,56 @@ namespace Quaver.Shared.Screens.Options
 {
     public class OptionsMenu : Sprite
     {
-        /// <summary>
-        /// </summary>
         public static string LastOpenedSection { get; set; } = "Video";
-
-        /// <summary>
-        /// </summary>
         private Bindable<string> CurrentSearchQuery { get; } = new Bindable<string>("") { Value = "" };
-
-        /// <summary>
-        /// </summary>
         private OptionsHeader Header { get; set; }
-
-        /// <summary>
-        /// </summary>
         private OptionsSidebar Sidebar { get; set; }
-
-        /// <summary>
-        /// </summary>
         private OptionsContent Content { get; set; }
-
-        /// <summary>
-        /// </summary>
         private List<OptionsSection> Sections { get; set; }
-
-        /// <summary>
-        /// </summary>
         public Bindable<OptionsSection> SelectedSection { get; private set; }
-
-        /// <summary>
-        /// </summary>
         private Dictionary<OptionsSection, OptionsContentContainer> ContentContainers { get; set; }
-
-        /// <summary>
-        ///     Whether or not an option is currently focused
-        /// </summary>
         public Bindable<bool> IsOptionFocused { get; } = new Bindable<bool>(false) { Value = false };
 
-        /// <summary>
-        /// </summary>
         public OptionsMenu()
         {
             Size = new ScalableVector2(1366, 768);
             Alpha = 0;
-
             CreateContainer();
             CreateSections();
             CreateSidebar();
             CreateContentContainers();
             CreateHeader();
-
             SelectedSection.Value = Sections.Find(x => x.Name == LastOpenedSection) ?? Sections.First();
             SetActiveContentContainer();
             SelectedSection.ValueChanged += OnSectionChanged;
             CurrentSearchQuery.ValueChanged += OnSearchChanged;
-
             DestroyIfParentIsNull = false;
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="gameTime"></param>
         public override void Update(GameTime gameTime)
         {
             SetOptionFocusedState();
             SkinManager.HandleSkinReloading();
-
             base.Update(gameTime);
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
         public override void Destroy()
         {
-            // ReSharper disable once DelegateSubtraction
             SelectedSection.ValueChanged -= OnSectionChanged;
             SelectedSection?.Dispose();
             CurrentSearchQuery?.Dispose();
             IsOptionFocused?.Dispose();
-
-            // Make sure to destroy everything that's not visible
             foreach (var section in Sections)
             {
                 foreach (var subcategory in section.Subcategories)
                 {
                     foreach (var item in subcategory.Items)
-                    {
                         item?.Destroy();
-                    }
                 }
             }
-
             base.Destroy();
         }
 
-        /// <summary>
-        /// </summary>
         private void CreateSections()
         {
             var containerRect = Content.ScreenRectangle;
@@ -139,10 +91,7 @@ namespace Quaver.Shared.Screens.Options
                     }),
                     new OptionsSubcategory("Frame Time", new List<OptionsItem>()
                     {
-                        new OptionsItemFrameLimiter(containerRect, "Frame Limiter")
-                        {
-                            Tags = new List<string> {"fps", "limited", "unlimited", "vsync", "wayland"}
-                        },
+                        new OptionsItemFrameLimiter(containerRect, "Frame Limiter") { Tags = new List<string> {"fps", "limited", "unlimited", "vsync", "wayland"} },
                         new OptionsItemCustomFps(containerRect, "Set Custom FPS"),
                         new OptionsItemCheckbox(containerRect, "Display FPS Counter", ConfigManager.FpsCounter),
                     })
@@ -157,10 +106,7 @@ namespace Quaver.Shared.Screens.Options
                     {
                         new OptionsSlider(containerRect, "Master Volume", ConfigManager.VolumeGlobal),
                         new OptionsSlider(containerRect, "Music Volume", ConfigManager.VolumeMusic),
-                        new OptionsSlider(containerRect, "Effect Volume", ConfigManager.VolumeEffect)
-                        {
-                            Tags = new List<string> {"fx", "sfx"}
-                        },
+                        new OptionsSlider(containerRect, "Effect Volume", ConfigManager.VolumeEffect) { Tags = new List<string> {"fx", "sfx"} },
                     }),
                     new OptionsSubcategory("Offset", new List<OptionsItem>()
                     {
@@ -170,47 +116,24 @@ namespace Quaver.Shared.Screens.Options
                     }),
                     new OptionsSubcategory("Effects", new List<OptionsItem>()
                     {
-                        new OptionsItemCheckbox(containerRect, "Pitch Audio With Playback Rate", ConfigManager.Pitched)
-                        {
-                            Tags = new List<string> {"speed"}
-                        }
+                        new OptionsItemCheckbox(containerRect, "Pitch Audio With Playback Rate", ConfigManager.Pitched) { Tags = new List<string> {"speed"} }
                     }),
                 }),
                 new OptionsSection("Gameplay", UserInterface.OptionsGameplay, new List<OptionsSubcategory>
                 {
-                
-                new OptionsSubcategory("Video Backgrounds (Mod)", new List<OptionsItem>()
+                    new OptionsSubcategory("Video Backgrounds (Mod)", new List<OptionsItem>()
                     {
                         new OptionsItemCheckbox(containerRect, "Enable Video Backgrounds", ConfigManager.VideoModEnabled),
-                        new OptionsItemCheckbox(containerRect, "Enable High Quality", ConfigManager.VideoModHighQuality),
+                        new OptionsItemCheckbox(containerRect, "Enable High Quality (1080p)", ConfigManager.VideoModHighQuality),
                         new OptionsItemCheckbox(containerRect, "Auto-Configure Performance", ConfigManager.VideoModAutoConfiguration),
-                        
-                        new OptionsSlider(containerRect, "Max Resolution (Height)", ConfigManager.VideoModTargetHeight, i => i == 0 ? "Native" : $"{i}p")
-                        {
-                            Tags = new List<string> {"quality", "480p", "720p", "1080p"}
-                        },
-                        new OptionsSlider(containerRect, "Update Rate (Hz)", ConfigManager.VideoModUpdateRate, i => $"{i}Hz")
-                        {
-                            Tags = new List<string> {"fps", "limit", "refresh", "stutter"}
-                        },
-                        new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i}M")
-                        {
-                            Tags = new List<string> {"memory", "buffer", "cache"}
-                        },
-                        new OptionsSlider(containerRect, "Decoder Threads", ConfigManager.VideoModDecoderThreads, i => $"{i}")
-                        {
-                            Tags = new List<string> {"cpu", "cores", "multithreading", "lag"}
-                        },
-                        new OptionsItemCheckbox(containerRect, "Enable 32-bit Color (Heavy)", ConfigManager.VideoModUse32Bit)
-                        {
-                            Tags = new List<string> {"quality", "color", "bitdepth", "lag"}
-                        },
-                        new OptionsItemCheckbox(containerRect, "Show Debug Overlay", ConfigManager.VideoModDebug)
-                        {
-                            Tags = new List<string> {"stats", "ram", "log", "fps"}
-                        }
+                        new OptionsSlider(containerRect, "Max Resolution (Height)", ConfigManager.VideoModTargetHeight, i => i == 0 ? "Native" : $"{i}p") { Tags = new List<string> {"quality", "480p", "720p", "1080p"} },
+                        new OptionsSlider(containerRect, "Update Rate (Hz)", ConfigManager.VideoModUpdateRate, i => $"{i}Hz") { Tags = new List<string> {"fps", "limit", "refresh", "stutter"} },
+                        new OptionsSlider(containerRect, "Max RAM Budget", ConfigManager.VideoModRamBudget, i => $"{i}M") { Tags = new List<string> {"memory", "buffer", "cache"} },
+                        new OptionsSlider(containerRect, "Decoder Threads", ConfigManager.VideoModDecoderThreads, i => $"{i}") { Tags = new List<string> {"cpu", "cores", "multithreading", "lag"} },
+                        new OptionsSlider(containerRect, "Preload Buffer", ConfigManager.VideoModPreloadSeconds, i => $"{i}s") { Tags = new List<string> {"lookahead", "buffer", "loading"} },
+                        new OptionsItemCheckbox(containerRect, "Enable 32-bit Color (Heavy)", ConfigManager.VideoModUse32Bit) { Tags = new List<string> {"quality", "color", "bitdepth", "lag"} },
+                        new OptionsItemCheckbox(containerRect, "Show Debug Overlay", ConfigManager.VideoModDebug) { Tags = new List<string> {"stats", "ram", "log", "fps"} }
                     }),
-                    
                     new OptionsSubcategory("Background", new List<OptionsItem>()
                     {
                         new OptionsSlider(containerRect, "Background Brightness", ConfigManager.BackgroundBrightness),
@@ -272,10 +195,8 @@ namespace Quaver.Shared.Screens.Options
                     }),
                     new OptionsSubcategory("Configuration", new List<OptionsItem>()
                     {
-                        new OptionsSlider(containerRect, "Note & Receptor Size Scale", ConfigManager.GameplayNoteScale, i => $"{i / 100f:0.00}x")
-                            {Tags = new List<string>() {"mini"}},
-                        new OptionsSlider(containerRect, "Playfield Scale", ConfigManager.PlayfieldScale, i => $"{i / 100f:0.00}x")
-                            {Tags = new List<string>() {"mini"}},
+                        new OptionsSlider(containerRect, "Note & Receptor Size Scale", ConfigManager.GameplayNoteScale, i => $"{i / 100f:0.00}x") {Tags = new List<string>() {"mini"}},
+                        new OptionsSlider(containerRect, "Playfield Scale", ConfigManager.PlayfieldScale, i => $"{i / 100f:0.00}x") {Tags = new List<string>() {"mini"}},
                         new OptionsItemCheckbox(containerRect, "Tint Hitlighting Based On Judgement Color", ConfigManager.TintHitLightingBasedOnJudgementColor)
                     })
                 }),
@@ -318,10 +239,6 @@ namespace Quaver.Shared.Screens.Options
                         new OptionsItemKeybind(containerRect, "Take Screenshot", ConfigManager.KeyScreenshot),
                     })
                 }),
-                // new OptionsSection("Gamemode specific", UserInterface.OptionsInput, new List<OptionsSubcategory>{
-                //     CreateGamemodeCategory(containerRect, GameMode.Keys4),
-                // }),
-                // new OptionsSectionGamemodeSpecific(containerRect, this),
                 new OptionsSection("Game mode specific", UserInterface.OptionsInput,
                     ModeHelper.AllModes.Select(x => CreateGamemodeCategory(containerRect,x)).ToList()
                 ),
@@ -335,14 +252,8 @@ namespace Quaver.Shared.Screens.Options
                     }),
                     new OptionsSubcategory("Installed Games", new List<OptionsItem>()
                     {
-                        new OptionsItemCheckbox(containerRect, "Load Songs From Other Installed Games", ConfigManager.AutoLoadOsuBeatmaps)
-                        {
-                            Tags = new List<string> {"osu!", "other games", "db", "etterna", "sm", "stepmania"}
-                        },
-                        new OptionsItemDetectOtherGames(containerRect, "Detect Songs From Other Installed Games")
-                        {
-                            Tags = new List<string> {"osu!", "other games", "db", "etterna", "sm", "stepmania"}
-                        },
+                        new OptionsItemCheckbox(containerRect, "Load Songs From Other Installed Games", ConfigManager.AutoLoadOsuBeatmaps) { Tags = new List<string> {"osu!", "other games", "db", "etterna", "sm", "stepmania"} },
+                        new OptionsItemDetectOtherGames(containerRect, "Detect Songs From Other Installed Games") { Tags = new List<string> {"osu!", "other games", "db", "etterna", "sm", "stepmania"} },
                     }),
                     new OptionsSubcategory("Notifications", new List<OptionsItem>()
                     {
@@ -361,10 +272,6 @@ namespace Quaver.Shared.Screens.Options
                                 x.Value, i => $"{i / 10f:0.0}")
                             )
                     ).ToList()),
-                    // new OptionsSubcategory("Beta", new List<OptionsItem>()
-                    // {
-                    //     new OptionsItemCheckbox(containerRect, "Skip Beta Splash Screen", ConfigManager.SkipSplashScreen),
-                    // }),
                 }),
                 new OptionsSection("Advanced", FontAwesome.Get(FontAwesomeIcon.fa_open_folder), new List<OptionsSubcategory>
                 {
@@ -372,10 +279,7 @@ namespace Quaver.Shared.Screens.Options
                     {
                         new OptionsItemCheckbox(containerRect, "Lower FPS On Inactive Window", ConfigManager.LowerFpsOnWindowInactive),
                         new OptionsItemCheckbox(containerRect, "Enable High Process Priority", ConfigManager.EnableHighProcessPriority),
-                        new OptionsItemCheckbox(containerRect, "Prefer Wayland", ConfigManager.PreferWayland)
-                        {
-                            Tags = new List<string> {"linux"}
-                        },
+                        new OptionsItemCheckbox(containerRect, "Prefer Wayland", ConfigManager.PreferWayland) { Tags = new List<string> {"linux"} },
                         new OptionsSlider(containerRect, "Editor ImGui Scale", ConfigManager.EditorImGuiScalePercentage)
                     }),
                     new OptionsSubcategory("Audio", new List<OptionsItem>()
@@ -391,7 +295,6 @@ namespace Quaver.Shared.Screens.Options
                         new OptionsItemCheckbox(containerRect, "Display Ranked Accuracy With Custom Judgements", ConfigManager.DisplayRankedAccuracy),
                         new OptionsSlider(containerRect, "Hit Error Fade Time", ConfigManager.HitErrorFadeTime, i => $"{i / 1000f:0.0} sec"),
                         new OptionsItemCheckbox(containerRect, "Enable Combo Alerts", ConfigManager.DisplayComboAlerts),
-                        //new OptionsItemCheckbox(containerRect, "[Donator] Enable Real-time Top 5 Online Scoreboard", ConfigManager.EnableRealtimeOnlineScoreboard),
                         new OptionsItemCheckbox(containerRect, "Display Unbeatable Scores", ConfigManager.DisplayUnbeatableScoresDuringGameplay),
                         new OptionsItemCheckbox(containerRect, "Keep Playing Upon Failing", ConfigManager.KeepPlayingUponFailing)
                     }),
@@ -421,224 +324,95 @@ namespace Quaver.Shared.Screens.Options
                     }),
                 }),
             };
-
             SelectedSection = new Bindable<OptionsSection>(Sections.First()) { Value = Sections.First() };
         }
 
         private static OptionsSubcategory CreateGamemodeCategory(RectangleF containerRect, GameMode mode)
         {
             var optionItems = new List<OptionsItem>(){
-                new OptionsItemKeybindMultiple(
-                    containerRect,
-                    $"{ModeHelper.ToShortHand(mode)} Gameplay Layout",
-                    ConfigManager.KeyLayouts[mode],
-                    Enumerable.Range(0, ModeHelper.ToKeyCount(mode)).Select(x => ConfigManager.DefaultKeyLayout(mode, x)).ToList()
-                )
-                {
-                    Tags = new List<string> { "keybind", "keyboard", "keys" }
-                },
-                new OptionsSlider(
-                    containerRect,
-                    $"{ModeHelper.ToShortHand(mode)} Scroll Speed",
-                    ConfigManager.ScrollSpeeds[mode],
-                    i => $"{i / 10f:0.0}"
-                ),
-                new OptionsItemScrollDirection(
-                    containerRect,
-                    $"{ModeHelper.ToShortHand(mode)} Scroll Direction",
-                    ConfigManager.ScrollDirections[mode]
-                ),
-                new OptionsItemKeybindMultiple(
-                    containerRect,
-                    $"{ModeHelper.ToShortHand(mode)} Scratch Layout",
-                    ConfigManager.ScratchKeyLayouts[mode],
-                    Enumerable.Range(0, 2).Select(x => new GenericKey(){KeyboardKey = Keys.None}).ToList()
-                )
-                {
-                    Tags = new List<string> { "keybind", "keyboard", "keys" }
-                },
-                new OptionsItemCheckbox(
-                    containerRect,
-                    $"Place {ModeHelper.ToShortHand(mode)} Scratch Lane On Left",
-                    ConfigManager.ScratchLanesLeft[mode]
-                ),
-                new OptionsItemKeybindMultiple(
-                    containerRect,
-                    $"{ModeHelper.ToShortHand(mode)} Co-op Layout",
-                    ConfigManager.CoopKeyLayouts[mode],
-                    Enumerable.Range(0, ModeHelper.ToKeyCount(mode)).Select(x => new GenericKey(){KeyboardKey = Keys.None}).ToList()
-                )
-                {
-                    Tags = new List<string> { "keybind", "keyboard", "keys" }
-                }
+                new OptionsItemKeybindMultiple(containerRect, $"{ModeHelper.ToShortHand(mode)} Gameplay Layout", ConfigManager.KeyLayouts[mode],
+                    Enumerable.Range(0, ModeHelper.ToKeyCount(mode)).Select(x => ConfigManager.DefaultKeyLayout(mode, x)).ToList()) { Tags = new List<string> { "keybind", "keyboard", "keys" } },
+                new OptionsSlider(containerRect, $"{ModeHelper.ToShortHand(mode)} Scroll Speed", ConfigManager.ScrollSpeeds[mode], i => $"{i / 10f:0.0}"),
+                new OptionsItemScrollDirection(containerRect, $"{ModeHelper.ToShortHand(mode)} Scroll Direction", ConfigManager.ScrollDirections[mode]),
+                new OptionsItemKeybindMultiple(containerRect, $"{ModeHelper.ToShortHand(mode)} Scratch Layout", ConfigManager.ScratchKeyLayouts[mode],
+                    Enumerable.Range(0, 2).Select(x => new GenericKey(){KeyboardKey = Keys.None}).ToList()) { Tags = new List<string> { "keybind", "keyboard", "keys" } },
+                new OptionsItemCheckbox(containerRect, $"Place {ModeHelper.ToShortHand(mode)} Scratch Lane On Left", ConfigManager.ScratchLanesLeft[mode]),
+                new OptionsItemKeybindMultiple(containerRect, $"{ModeHelper.ToShortHand(mode)} Co-op Layout", ConfigManager.CoopKeyLayouts[mode],
+                    Enumerable.Range(0, ModeHelper.ToKeyCount(mode)).Select(x => new GenericKey(){KeyboardKey = Keys.None}).ToList()) { Tags = new List<string> { "keybind", "keyboard", "keys" } }
             };
-
             return new OptionsSubcategory(ModeHelper.ToLongHand(mode), optionItems);
         }
 
-        /// <summary>
-        /// </summary>
-        private void CreateHeader() => Header = new OptionsHeader(SelectedSection, Width, Sidebar.Width, CurrentSearchQuery,
-            IsOptionFocused)
-        {
-            Parent = this,
-            Alignment = Alignment.TopLeft
-        };
-
-        /// <summary>
-        /// </summary>
-        private void CreateSidebar()
-        {
-            Sidebar = new OptionsSidebar(SelectedSection, Sections, new ScalableVector2(OptionsSidebar.WIDTH,
-                Height - OptionsHeader.HEIGHT))
-            {
-                Parent = this,
-                Y = OptionsHeader.HEIGHT
-            };
-        }
-
-        /// <summary>
-        /// </summary>
-        private void CreateContainer()
-        {
-            Content = new OptionsContent(new ScalableVector2(Width - OptionsSidebar.WIDTH + 2,
-                Height - OptionsHeader.HEIGHT))
-            {
-                Parent = this,
-                Alignment = Alignment.TopLeft,
-                X = OptionsSidebar.WIDTH - 2,
-                Y = OptionsHeader.HEIGHT
-            };
-        }
-
-        /// <summary>
-        /// </summary>
+        private void CreateHeader() => Header = new OptionsHeader(SelectedSection, Width, Sidebar.Width, CurrentSearchQuery, IsOptionFocused) { Parent = this, Alignment = Alignment.TopLeft };
+        private void CreateSidebar() => Sidebar = new OptionsSidebar(SelectedSection, Sections, new ScalableVector2(OptionsSidebar.WIDTH, Height - OptionsHeader.HEIGHT)) { Parent = this, Y = OptionsHeader.HEIGHT };
+        private void CreateContainer() => Content = new OptionsContent(new ScalableVector2(Width - OptionsSidebar.WIDTH + 2, Height - OptionsHeader.HEIGHT)) { Parent = this, Alignment = Alignment.TopLeft, X = OptionsSidebar.WIDTH - 2, Y = OptionsHeader.HEIGHT };
+        
         private void CreateContentContainers()
         {
             ContentContainers = new Dictionary<OptionsSection, OptionsContentContainer>();
-
             foreach (var section in Sections)
                 ContentContainers.Add(section, new OptionsContentContainer(section, Content.Size));
         }
 
-        /// <summary>
-        /// </summary>
         private void SetActiveContentContainer()
         {
             foreach (var container in ContentContainers)
                 container.Value.Parent = SelectedSection.Value == container.Key ? Content : null;
         }
 
-        /// <summary>
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
         private void OnSearchChanged(object sender, BindableValueChangedEventArgs<string> e)
         {
             ScheduleUpdate(() =>
             {
-                // User searched nothing, so clear the search and select the first section again
                 if (SelectedSection.Value.Name == string.Empty)
                 {
                     ClearSearchAndReiRenitializeSections(SelectedSection.Value);
-
-                    if (string.IsNullOrEmpty(e.Value))
-                    {
-                        SelectedSection.Value = Sections.First();
-                        return;
-                    }
+                    if (string.IsNullOrEmpty(e.Value)) { SelectedSection.Value = Sections.First(); return; }
                 }
-
                 var items = new List<OptionsItem>();
-
                 foreach (var section in Sections)
                 {
                     foreach (var category in section.Subcategories)
-                        items.AddRange(category.Items.FindAll(x => x.Name.Text.ToLower().Contains(e.Value.ToLower())
-                                                                   || x.Tags.Any(y => y.ToLower().Contains(e.Value.ToLower()))));
+                        items.AddRange(category.Items.FindAll(x => x.Name.Text.ToLower().Contains(e.Value.ToLower()) || x.Tags.Any(y => y.ToLower().Contains(e.Value.ToLower()))));
                 }
-
-                // Create a temporary section
-                var categoryName = $"{items.Count} Search Result";
-
-                if (items.Count > 1 || items.Count == 0)
-                    categoryName += "s";
-
-                var newSection = new OptionsSection(string.Empty, FontAwesome.Get(FontAwesomeIcon.fa_magnifying_glass),
-                    new List<OptionsSubcategory> { new OptionsSubcategory(categoryName, items) });
-
+                var categoryName = $"{items.Count} Search Result" + ((items.Count > 1 || items.Count == 0) ? "s" : "");
+                var newSection = new OptionsSection(string.Empty, FontAwesome.Get(FontAwesomeIcon.fa_magnifying_glass), new List<OptionsSubcategory> { new OptionsSubcategory(categoryName, items) });
                 ContentContainers.Add(newSection, new OptionsContentContainer(newSection, Content.Size));
                 SelectedSection.Value = newSection;
             });
         }
 
-        /// <summary>
-        ///     Handles when removing all the text from the search field, and reinitializing the containers
-        ///     so they regain their initial state
-        /// </summary>
-        /// <param name="section"></param>
         private void ClearSearchAndReiRenitializeSections(OptionsSection section)
         {
-            var searchedSection = section;
-
-            if (!ContentContainers.ContainsKey(searchedSection))
-                return;
-
-            var container = ContentContainers[searchedSection];
-
-            ContentContainers.Remove(searchedSection);
-
+            if (!ContentContainers.ContainsKey(section)) return;
+            var container = ContentContainers[section];
+            ContentContainers.Remove(section);
             foreach (var contentContainer in ContentContainers)
                 contentContainer.Value.ReInitialize();
-
             container.Destroy();
-            Sections.Remove(searchedSection);
+            Sections.Remove(section);
         }
 
-        /// <summary>
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
         private void OnSectionChanged(object sender, BindableValueChangedEventArgs<OptionsSection> e)
         {
             ScheduleUpdate(() =>
             {
-                if (e.OldValue.Name == string.Empty)
-                    ClearSearchAndReiRenitializeSections(e.OldValue);
-
+                if (e.OldValue.Name == string.Empty) ClearSearchAndReiRenitializeSections(e.OldValue);
                 SetActiveContentContainer();
-
-                // Update previous and newest section to make sure button hover status is up-to-date
                 UpdateSection(e.OldValue);
                 UpdateSection(e.Value);
             });
         }
 
-        private void UpdateSection(OptionsSection section) => section?.Subcategories.ForEach(x =>
-            x.Items.ForEach(y => y.Update(new GameTime())));
+        private void UpdateSection(OptionsSection section) => section?.Subcategories.ForEach(x => x.Items.ForEach(y => y.Update(new GameTime())));
 
-        /// <summary>
-        ///     Looks through each section and checks if any of the keybinds are currently focused.
-        ///     This sets the bindable, so that the search textbox knows when to become always active or not
-        /// </summary>
         private void SetOptionFocusedState()
         {
             var isFocused = false;
-
             foreach (var section in Sections)
-            {
                 foreach (var category in section.Subcategories)
-                {
                     foreach (var item in category.Items)
-                    {
-                        if (item.Focused)
-                        {
-                            isFocused = true;
-                        }
-                    }
-                }
-            }
-
+                        if (item.Focused) isFocused = true;
             IsOptionFocused.Value = isFocused;
         }
     }
