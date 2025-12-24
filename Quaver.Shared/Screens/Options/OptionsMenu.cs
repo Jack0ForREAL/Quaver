@@ -201,9 +201,13 @@ namespace Quaver.Shared.Screens.Options
                         {
                             Tags = new List<string> {"cpu", "cores", "multithreading", "lag"}
                         },
-                        new OptionsSlider(containerRect, "Preload Buffer", ConfigManager.VideoModPreloadSeconds, i => $"{i}s")
+                        new OptionsItemCheckbox(containerRect, "Enable 32-bit Color (Heavy)", ConfigManager.VideoModUse32Bit)
                         {
-                            Tags = new List<string> {"lookahead", "buffer", "loading"}
+                            Tags = new List<string> {"quality", "color", "bitdepth", "lag"}
+                        },
+                        new OptionsItemCheckbox(containerRect, "Show Debug Overlay", ConfigManager.VideoModDebug)
+                        {
+                            Tags = new List<string> {"stats", "ram", "log", "fps"}
                         }
                     }),
                     
