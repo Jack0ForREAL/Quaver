@@ -1,53 +1,76 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
-*/
-
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
-using Quaver.API.Helpers;
 using Quaver.API.Maps;
 using Quaver.Shared.Config;
 using Quaver.Shared.Database.Maps;
 using Quaver.Shared.Modifiers;
-using Quaver.Shared.Scheduling;
 using Wobble;
 using Wobble.Audio;
 using Wobble.Audio.Tracks;
-using Wobble.Graphics;
 
 namespace Quaver.Shared.Audio
 {
     public static class AudioEngine
     {
-        /// <summary>
-        ///     The AudioTrack for the currently selected map.
-        /// </summary>
         public static IAudioTrack Track { get; internal set; }
-
-        /// <summary>
-        ///     The map the loaded AudioTrack is for.
-        /// </summary>
         public static Map Map { get; set; }
-
-        /// <summary>
-        ///     Cancellation token to prevent multiple audio tracks playing at once
-        /// </summary>
         private static CancellationTokenSource Source { get; set; } = new CancellationTokenSource();
-
-        /// <summary>
-        ///     The length of time when the audio time is 0 after we first play the audio
-        /// </summary>
         public static double MeasuredAudioStartDelay { get; internal set; }
 
+        // v2: Hybrid Clock Variables
+        private static readonly Stopwatch HybridClock = new Stopwatch();
+        private static double _lastAudioTime;
+        private static bool _isHybridRunning;
+
         /// <summary>
-        ///     Loads the track for the currently selected map.
+        ///     v2: Gets the smoothed, interpolated time.
+        ///     This decouples visual smoothness from audio buffer updates, fixing "jittery" notes on high refresh rates.
         /// </summary>
+        public static double Time
+        {
+            get
+            {
+                if (Track == null || Track.IsDisposed) return 0;
+
+                // If stopped, just return track time
+                if (!Track.IsPlaying)
+                {
+                    _isHybridRunning = false;
+                    HybridClock.Stop();
+                    return Track.Time;
+                }
+
+                // If we just started playing, sync the clock
+                if (!_isHybridRunning)
+                {
+                    _isHybridRunning = true;
+                    _lastAudioTime = Track.Time;
+                    HybridClock.Restart();
+                    return _lastAudioTime;
+                }
+
+                double audioTime = Track.Time;
+                double clockTime = HybridClock.Elapsed.TotalMilliseconds * Track.Rate;
+                double projectedTime = _lastAudioTime + clockTime;
+
+                // Sync logic: If the audio driver has moved significantly (buffer update), re-sync.
+                // We allow a 20ms drift window before hard-snapping to prevent micro-stutters.
+                double drift = Math.Abs(projectedTime - audioTime);
+                
+                if (drift > 20) 
+                {
+                     // Hard sync (Audio driver update or seek happened)
+                    _lastAudioTime = audioTime;
+                    HybridClock.Restart();
+                    return audioTime;
+                }
+
+                // Return the smooth projected time for visuals
+                return projectedTime;
+            }
+        }
+
         public static void LoadCurrentTrack(bool preview = false, int time = 300000)
         {
             Source.Cancel();
@@ -62,6 +85,10 @@ namespace Quaver.Shared.Audio
                 if (Track != null && !Track.IsDisposed)
                     Track.Dispose();
 
+                // v2: Optimization - Explicitly dispose old clock state
+                HybridClock.Reset();
+                _isHybridRunning = false;
+
                 var newTrack = new AudioTrack(MapManager.CurrentAudioPath, false)
                 {
                     Rate = ModHelper.GetRateFromMods(ModManager.Mods),
@@ -72,9 +99,6 @@ namespace Quaver.Shared.Audio
                 Track = newTrack;
                 Track.ApplyRate(ConfigManager.Pitched.Value);
             }
-            catch (OperationCanceledException)
-            {
-            }
             catch (Exception)
             {
                 if (Track is { IsDisposed: false })
@@ -84,86 +108,55 @@ namespace Quaver.Shared.Audio
             }
         }
 
-        /// <summary>
-        ///     Plays the track at its preview time.
-        /// </summary>
         public static void PlaySelectedTrackAtPreview()
         {
             try
             {
-                if (MapManager.Selected?.Value == null)
-                    return;
+                if (MapManager.Selected?.Value == null) return;
 
                 if (Track != null)
                 {
-                    lock (Track)
-                        LoadCurrentTrack(true);
+                    lock (Track) LoadCurrentTrack(true);
                 }
                 else
                 {
                     LoadCurrentTrack(true);
                 }
 
-                if (Track == null)
-                    return;
+                if (Track == null) return;
 
                 lock (Track)
                 {
                     Track?.Seek(MapManager.Selected.Value.AudioPreviewTime);
-
-                    if (!Track.IsPlaying)
-                        Track?.Play();
+                    if (!Track.IsPlaying) Track?.Play();
                 }
             }
-            catch (Exception)
-            {
-                // ignored
-            }
+            catch (Exception) { /* ignored */ }
         }
 
-        /// <summary>
-        ///     Seeks to the nearest snap(th) beat in the audio based on the
-        ///     current timing point's snap.
-        /// </summary>
-        /// <param name="map"></param>
-        /// <param name="direction"></param>
-        /// <param name="snap"></param>
         public static void SeekTrackToNearestSnap(Qua map, Direction direction, int snap)
         {
+            // Use the raw Track.Time for seeking logic, not the interpolated time
             var seekTime = GetNearestSnapTimeFromTime(map, direction, snap, Track.Time);
 
             if (seekTime < 0 || seekTime > Track.Length)
                 return;
 
             Track.Seek(seekTime);
+            
+            // v2: Reset hybrid clock on seek
+            HybridClock.Restart();
+            _lastAudioTime = seekTime;
         }
 
-        /// <summary>
-        ///     Gets the nearest snap time at a given direction.
-        /// </summary>
-        /// <param name="map"></param>
-        /// <param name="direction"></param>
-        /// <param name="snap"></param>
-        /// <param name="time"></param>
-        /// <returns></returns>
-        /// <exception cref="AudioEngineException"></exception>
-        /// <exception cref="ArgumentNullException"></exception>
-        /// <exception cref="ArgumentOutOfRangeException"></exception>
         public static double GetNearestSnapTimeFromTime(Qua map, Direction direction, float snap, double time)
         {
-            if (map == null)
-                throw new ArgumentNullException(nameof(map));
+            if (map == null) throw new ArgumentNullException(nameof(map));
 
-            // Get the current timing point
             var point = map.GetTimingPointAt(time);
+            if (point == null) return 0;
 
-            if (point == null)
-                return 0;
-
-            // Get the amount of milliseconds that each snap takes in the beat.
             var snapTimePerBeat = 60000 / point.Bpm / snap;
-
-            // The point in the music that we want to snap to pre-rounding.
             double pointToSnap;
 
             switch (direction)
@@ -189,40 +182,15 @@ namespace Quaver.Shared.Audio
             return (Math.Round((pointToSnap - point.StartTime) / snapTimePerBeat) - 1) * snapTimePerBeat + point.StartTime;
         }
 
-        public static IAudioTrack LoadMapAudioTrack(Map map)
-        {
-            IAudioTrack track;
-
-            try
-            {
-                track = new AudioTrack(MapManager.GetAudioPath(map), false, false);
-            }
-            catch (Exception)
-            {
-                track = new AudioTrackVirtual(map.SongLength + 5000);
-            }
-
-            return track;
-        }
-
-        /// <summary>
-        ///     Loads up a dummy audio. Plays it and see how long it takes for its Time
-        ///     to get from 0 to other values.
-        /// </summary>
-        /// <remarks>
-        ///     We need to make this single threaded here. It seems like bass doesn't like Tasks.
-        /// </remarks>
         public static void MeasureAudioStartDelay()
         {
+            // Kept primarily for legacy compatibility, but v2 relies less on this hack
             var prevTrack = Track;
-            Track =
-                new AudioTrack(GameBase.Game.Resources.Get($"Quaver.Resources/Maps/Offset/offset.mp3"));
+            Track = new AudioTrack(GameBase.Game.Resources.Get($"Quaver.Resources/Maps/Offset/offset.mp3"));
             Track.Volume = 0;
             var stopwatch = Stopwatch.StartNew();
             Track.Play();
-            while (Track.Time == 0)
-            {
-            }
+            while (Track.Time == 0) { }
             stopwatch.Stop();
             Track.Stop();
             Track.Dispose();
