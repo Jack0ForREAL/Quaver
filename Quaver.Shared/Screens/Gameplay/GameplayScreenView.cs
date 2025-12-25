@@ -96,7 +96,8 @@ namespace Quaver.Shared.Screens.Gameplay
         private Process FfmpegProcess;
 
         private SpriteBatch VideoBatch;
-        private SpriteFont DebugFont; // NEW: For Stats Overlay
+        private SpriteFont DebugFont; 
+        private Texture2D DebugBoxTexture; // FIX: Manually created texture for box
         private int VideoWidth, VideoHeight;
         private double FrameTimeMs;
         private int LastUploadedIndex = -1;
@@ -120,6 +121,11 @@ namespace Quaver.Shared.Screens.Gameplay
             {
                 try {
                     VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
+                    
+                    // FIX: Create a 1x1 white texture for the debug box
+                    DebugBoxTexture = new Texture2D(GameBase.Game.GraphicsDevice, 1, 1);
+                    DebugBoxTexture.SetData(new[] { Color.White });
+
                     // Load font safely
                     try { DebugFont = GameBase.Game.Content.Load<SpriteFont>("Fonts/WidthFixed"); } catch {}
                     
@@ -278,7 +284,6 @@ namespace Quaver.Shared.Screens.Gameplay
             var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
             if (width == 0) return;
 
-            // RESOLUTION
             int targetH = ConfigManager.VideoModTargetHeight.Value;
             if (targetH <= 0) targetH = height;
             targetH = Math.Min(targetH, height);
@@ -291,17 +296,13 @@ namespace Quaver.Shared.Screens.Gameplay
             VideoHeight = targetH;
             FrameTimeMs = frameTime;
 
-            // --- ADVANCED CONFIGURATION ---
             bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
-            // 4 bytes if 32-bit, 2 bytes if 16-bit
             int bytesPerPixel = use32Bit ? 4 : 2;
             string pixelFormat = use32Bit ? "rgba" : "rgb565le";
             
             int frameSize = VideoWidth * VideoHeight * bytesPerPixel;
             
-            // Calculate buffer
             int bufferCount = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
-            // Cap higher for 16-bit mode because it takes less RAM
             int cap = use32Bit ? 200 : 400;
             bufferCount = Math.Clamp(bufferCount, 10, cap);
 
@@ -314,7 +315,6 @@ namespace Quaver.Shared.Screens.Gameplay
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = VideoUtils.FFmpegPath,
-                    // DYNAMIC FORMAT (16 vs 32 bit)
                     Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -f rawvideo -pix_fmt {pixelFormat} -v quiet -",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -430,7 +430,6 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (ConfigManager.VideoModEnabled.Value)
             {
-                // Throttling
                 double targetInterval = 1000.0 / ConfigManager.VideoModUpdateRate.Value;
                 VideoUpdateAccumulator += gameTime.ElapsedGameTime.TotalMilliseconds;
                 if (VideoUpdateAccumulator >= targetInterval)
@@ -466,7 +465,7 @@ namespace Quaver.Shared.Screens.Gameplay
                 VideoBatch.Draw(currentTexture, new Rectangle(0, 0, w, h), Color.White);
 
                 // --- RICH DEBUG OVERLAY ---
-                if (ConfigManager.VideoModDebug.Value && DebugFont != null)
+                if (ConfigManager.VideoModDebug.Value && DebugFont != null && DebugBoxTexture != null)
                 {
                     int bufferedFrames = VideoBuffer.Count;
                     int freeFrames = FreeBufferPool.Count;
@@ -479,8 +478,8 @@ namespace Quaver.Shared.Screens.Gameplay
                                    $"Buffer: {bufferedFrames} Ready / {freeFrames} Free\n" +
                                    $"Video RAM: ~{ramUsage} MB";
 
-                    // Draw box and text
-                    VideoBatch.Draw(UserInterface.WhitePixel, new Rectangle(10, 100, 280, 120), new Color(0, 0, 0, 150));
+                    // FIX: Use manual texture
+                    VideoBatch.Draw(DebugBoxTexture, new Rectangle(10, 100, 280, 120), new Color(0, 0, 0, 150));
                     VideoBatch.DrawString(DebugFont, stats, new Vector2(20, 110), Color.LimeGreen);
                 }
 
@@ -515,6 +514,7 @@ namespace Quaver.Shared.Screens.Gameplay
                     tex?.Dispose();
             }
             VideoBatch?.Dispose();
+            DebugBoxTexture?.Dispose(); // FIX: Cleanup box texture
 
             GC.Collect();
 
@@ -525,7 +525,7 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Destroy();
         }
 
-        // ... [Rest of the file is standard functions] ...
+        // ... [Standard functions like CreateBackground, CreateProgressBar, etc. remain here] ...
         private void CreateBackground()
         {
             var background = BackgroundHelper.RawTexture;
