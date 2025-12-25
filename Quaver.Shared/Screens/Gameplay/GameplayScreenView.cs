@@ -83,14 +83,12 @@ namespace Quaver.Shared.Screens.Gameplay
         private ReplayController ReplayController { get; }
 
         // --- MP4 VIDEO MOD VARIABLES ---
-        private class DecodedFrame { public int Index; public byte[] PixelData; }
+        private struct DecodedFrame { public int Index; public byte[] PixelData; }
 
-        // Ring Buffer
         private Texture2D[] RingTextures;
         private int CurrentRingIndex = 0;
         private int DrawRingIndex = -1;
 
-        // Config & State
         private long MaxRamUsageBytes;
         private int DecoderThreadCount;
         private ConcurrentDictionary<int, DecodedFrame> VideoBuffer = new ConcurrentDictionary<int, DecodedFrame>();
@@ -98,9 +96,15 @@ namespace Quaver.Shared.Screens.Gameplay
         private Process FfmpegProcess;
 
         private SpriteBatch VideoBatch;
+        private SpriteFont DebugFont; // NEW: For Stats Overlay
         private int VideoWidth, VideoHeight;
         private double FrameTimeMs;
         private int LastUploadedIndex = -1;
+
+        // Throttling & Pooling
+        private double VideoUpdateAccumulator = 0;
+        private ConcurrentStack<byte[]> FreeBufferPool = new ConcurrentStack<byte[]>();
+        private bool IsPoolInitialized = false;
 
         public GameplayScreenView(Screen screen) : base(screen)
         {
@@ -111,14 +115,21 @@ namespace Quaver.Shared.Screens.Gameplay
 
             CreateBackground();
 
-            // Init Video Batch
-            VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
-
-            ConfigureVideoMod();
-
-            if (ConfigManager.VideoModEnabled.Value)
+            // Init Video Batch & Font
+            if (!Screen.IsSongSelectPreview)
             {
-                RunVideoLoaderMp4(VideoLoaderToken.Token);
+                try {
+                    VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
+                    // Load font safely
+                    try { DebugFont = GameBase.Game.Content.Load<SpriteFont>("Fonts/WidthFixed"); } catch {}
+                    
+                    ConfigureVideoMod();
+
+                    if (ConfigManager.VideoModEnabled.Value)
+                    {
+                        RunVideoLoaderMp4(VideoLoaderToken.Token);
+                    }
+                } catch { }
             }
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
@@ -267,14 +278,12 @@ namespace Quaver.Shared.Screens.Gameplay
             var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
             if (width == 0) return;
 
-            // OPTIMIZED RESOLUTION CALC
+            // RESOLUTION
             int targetH = ConfigManager.VideoModTargetHeight.Value;
             if (targetH <= 0) targetH = height;
             targetH = Math.Min(targetH, height);
-
             float aspect = (float)width / height;
             int targetW = (int)(targetH * aspect);
-
             if (targetW % 2 != 0) targetW++;
             if (targetH % 2 != 0) targetH++;
 
@@ -282,13 +291,31 @@ namespace Quaver.Shared.Screens.Gameplay
             VideoHeight = targetH;
             FrameTimeMs = frameTime;
 
+            // --- ADVANCED CONFIGURATION ---
+            bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
+            // 4 bytes if 32-bit, 2 bytes if 16-bit
+            int bytesPerPixel = use32Bit ? 4 : 2;
+            string pixelFormat = use32Bit ? "rgba" : "rgb565le";
+            
+            int frameSize = VideoWidth * VideoHeight * bytesPerPixel;
+            
+            // Calculate buffer
+            int bufferCount = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
+            // Cap higher for 16-bit mode because it takes less RAM
+            int cap = use32Bit ? 200 : 400;
+            bufferCount = Math.Clamp(bufferCount, 10, cap);
+
+            for (int i = 0; i < bufferCount; i++)
+                FreeBufferPool.Push(new byte[frameSize]);
+            IsPoolInitialized = true;
+
             try
             {
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = VideoUtils.FFmpegPath,
-                    // OPTIMIZATION: rgb565le (16-bit color)
-                    Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -f rawvideo -pix_fmt rgb565le -v quiet -",
+                    // DYNAMIC FORMAT (16 vs 32 bit)
+                    Arguments = $"-threads {DecoderThreadCount} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -f rawvideo -pix_fmt {pixelFormat} -v quiet -",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     CreateNoWindow = true
@@ -296,23 +323,17 @@ namespace Quaver.Shared.Screens.Gameplay
 
                 FfmpegProcess = Process.Start(startInfo);
                 var stream = FfmpegProcess.StandardOutput.BaseStream;
-                // OPTIMIZATION: 2 bytes per pixel
-                int frameSize = VideoWidth * VideoHeight * 2;
                 int frameIndex = 0;
-
-                int maxFramesToBuffer = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
-                // Clamp to prevent RAM explosion but allow reasonable buffer
-                maxFramesToBuffer = Math.Clamp(maxFramesToBuffer, 30, 300);
 
                 while (!token.IsCancellationRequested && !FfmpegProcess.HasExited)
                 {
-                    if (VideoBuffer.Count >= maxFramesToBuffer)
+                    if (FreeBufferPool.IsEmpty)
                     {
-                        Thread.Sleep(2);
+                        Thread.Sleep(5);
                         continue;
                     }
 
-                    byte[] data = System.Buffers.ArrayPool<byte>.Shared.Rent(frameSize);
+                    if (!FreeBufferPool.TryPop(out byte[] data)) continue;
 
                     try
                     {
@@ -375,16 +396,18 @@ namespace Quaver.Shared.Screens.Gameplay
 
             try
             {
+                bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
+                int bytesPerPixel = use32Bit ? 4 : 2;
+                SurfaceFormat format = use32Bit ? SurfaceFormat.Color : SurfaceFormat.Bgr565;
+
                 if (RingTextures == null)
                 {
                     RingTextures = new Texture2D[3];
                     for (int i = 0; i < 3; i++)
-                        // OPTIMIZATION: Bgr565 for 16-bit textures
-                        RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, SurfaceFormat.Bgr565);
+                        RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, format);
                 }
 
-                // OPTIMIZATION: Upload 2 bytes per pixel
-                RingTextures[CurrentRingIndex].SetData(frameToUpload.PixelData, 0, VideoWidth * VideoHeight * 2);
+                RingTextures[CurrentRingIndex].SetData(frameToUpload.PixelData, 0, VideoWidth * VideoHeight * bytesPerPixel);
                 DrawRingIndex = CurrentRingIndex;
                 CurrentRingIndex = (CurrentRingIndex + 1) % 3;
                 LastUploadedIndex = currentFrameIndex;
@@ -406,7 +429,17 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Update(gameTime);
 
             if (ConfigManager.VideoModEnabled.Value)
-                UpdateAndUploadVideoTexture();
+            {
+                // Throttling
+                double targetInterval = 1000.0 / ConfigManager.VideoModUpdateRate.Value;
+                VideoUpdateAccumulator += gameTime.ElapsedGameTime.TotalMilliseconds;
+                if (VideoUpdateAccumulator >= targetInterval)
+                {
+                    UpdateAndUploadVideoTexture();
+                    VideoUpdateAccumulator %= targetInterval; 
+                    if (VideoUpdateAccumulator > targetInterval) VideoUpdateAccumulator = 0;
+                }
+            }
 
             UpdateGradeDisplay();
 
@@ -431,6 +464,26 @@ namespace Quaver.Shared.Screens.Gameplay
                 int w = GameBase.Game.GraphicsDevice.Viewport.Width;
                 int h = GameBase.Game.GraphicsDevice.Viewport.Height;
                 VideoBatch.Draw(currentTexture, new Rectangle(0, 0, w, h), Color.White);
+
+                // --- RICH DEBUG OVERLAY ---
+                if (ConfigManager.VideoModDebug.Value && DebugFont != null)
+                {
+                    int bufferedFrames = VideoBuffer.Count;
+                    int freeFrames = FreeBufferPool.Count;
+                    long ramUsage = (bufferedFrames + freeFrames) * (long)(VideoWidth * VideoHeight * (ConfigManager.VideoModUse32Bit.Value ? 4 : 2)) / (1024*1024);
+                    string mode = ConfigManager.VideoModUse32Bit.Value ? "32-bit (High)" : "16-bit (Fast)";
+                    
+                    string stats = $"VIDEO STATS\n" +
+                                   $"Mode: {mode}\n" +
+                                   $"Res: {VideoWidth}x{VideoHeight}\n" +
+                                   $"Buffer: {bufferedFrames} Ready / {freeFrames} Free\n" +
+                                   $"Video RAM: ~{ramUsage} MB";
+
+                    // Draw box and text
+                    VideoBatch.Draw(UserInterface.WhitePixel, new Rectangle(10, 100, 280, 120), new Color(0, 0, 0, 150));
+                    VideoBatch.DrawString(DebugFont, stats, new Vector2(20, 110), Color.LimeGreen);
+                }
+
                 VideoBatch.End();
             }
             else
@@ -463,7 +516,6 @@ namespace Quaver.Shared.Screens.Gameplay
             }
             VideoBatch?.Dispose();
 
-            // Force GC to clean up large arrays immediately to prevent menu lag
             GC.Collect();
 
             if (OnlineManager.Client != null)
@@ -473,23 +525,18 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Destroy();
         }
 
+        // ... [Rest of the file is standard functions] ...
         private void CreateBackground()
         {
             var background = BackgroundHelper.RawTexture;
-
-            if (background == null)
-                background = UserInterface.MenuBackgroundClear;
-
+            if (background == null) background = UserInterface.MenuBackgroundClear;
             Background = new BackgroundImage(background, 100 - ConfigManager.BackgroundBrightness.Value, false);
         }
 
         private void CreateProgressBar()
         {
-            if (!ConfigManager.DisplaySongTimeProgress.Value)
-                return;
-
+            if (!ConfigManager.DisplaySongTimeProgress.Value) return;
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width, 4), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0,
                 skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor)
             {
@@ -501,11 +548,8 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private void CreateMiniProgressBar()
         {
-            if (!ConfigManager.DisplaySongTimeProgress.Value)
-                return;
-
+            if (!ConfigManager.DisplaySongTimeProgress.Value) return;
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width / SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayWidthFactor, SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayHeight), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0,
                 skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor, true)
             {
@@ -520,7 +564,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateScoreDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             ScoreDisplay = new GameplayNumberDisplay(NumberDisplayType.Score, StringHelper.ScoreToString(0),
                 new Vector2(skin.ScoreDisplayScale / 100f, skin.ScoreDisplayScale / 100f))
             {
@@ -534,7 +577,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateRatingDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             RatingDisplay = new GameplayNumberDisplay(NumberDisplayType.Rating, StringHelper.RatingToString(0),
                 new Vector2(skin.RatingDisplayScale / 100f, skin.RatingDisplayScale / 100f))
             {
@@ -548,7 +590,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateAccuracyDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             AccuracyDisplay = new GameplayNumberDisplay(NumberDisplayType.Accuracy, StringHelper.AccuracyToString(0),
                 new Vector2(skin.AccuracyDisplayScale / 100f, skin.AccuracyDisplayScale / 100f))
             {
@@ -562,7 +603,6 @@ namespace Quaver.Shared.Screens.Gameplay
         public void UpdateScoreAndAccuracyDisplays()
         {
             ScoreDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Score);
-
             RatingDisplay.UpdateValue(RatingProcessor.CalculateRating(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy));
             if (ConfigManager.DisplayRankedAccuracy.Value || Screen.IsSpectatingTournament)
                 AccuracyDisplay.UpdateValue(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy);
@@ -573,7 +613,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateKeysPerSecondDisplay()
         {
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-
             KpsDisplay = new KeysPerSecond(NumberDisplayType.Score, "0", new Vector2(skin.KpsDisplayScale / 100f, skin.KpsDisplayScale / 100f))
             {
                 Parent = Container,
@@ -594,7 +633,6 @@ namespace Quaver.Shared.Screens.Gameplay
         private void CreateScoreboards()
         {
             var scoreboardName = Screen.InReplayMode ? Screen.LoadedReplay.PlayerName : ConfigManager.Username.Value;
-
             var selfAvatar = ConfigManager.Username.Value == scoreboardName ? SteamManager.GetAvatarOrUnknown(SteamUser.GetSteamID().m_SteamID)
                 : UserInterface.UnknownAvatar;
 
