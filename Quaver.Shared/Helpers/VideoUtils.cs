@@ -32,44 +32,63 @@ namespace Quaver.Shared.Helpers
 
         public static async Task<bool> CheckOrDownloadFFmpeg()
         {
-            // 1. Check if file exists AND is valid (larger than 1MB)
+            // Check if file exists AND is valid (larger than 10MB)
             if (File.Exists(FFmpegPath))
             {
                 var info = new FileInfo(FFmpegPath);
-                if (info.Length > 1024 * 1024) // If bigger than 1MB, assume it's good
-                {
-                    return true;
-                }
-                
-                // If we get here, file is corrupt/empty. Delete it.
+                if (info.Length > 10 * 1024 * 1024) return true;
                 try { File.Delete(FFmpegPath); } catch {}
             }
             
-            // Linux check
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && CheckLinuxFFmpeg()) 
                 return true;
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return false;
 
-            // 2. Download Logic
             try
             {
-                NotificationManager.Show(NotificationLevel.Info, "Downloading Video Component (FFmpeg)...", null, false);
+                NotificationManager.Show(NotificationLevel.Info, "Downloading Video Component... (0%)", null, false);
                 
-                // FORCE TLS 1.2/1.3 (Fixes connection drops)
                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
 
                 using (var client = new HttpClient())
                 {
-                    // FAKE BROWSER HEADERS (Fixes 403 Forbidden)
+                    // Fake Browser Headers
                     client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
                     var url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
-                    var zipBytes = await client.GetByteArrayAsync(url);
                     var zipPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg_temp.zip");
+
+                    using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        var totalBytes = response.Content.Headers.ContentLength ?? 100_000_000;
+
+                        using (var stream = await response.Content.ReadAsStreamAsync())
+                        using (var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
+                        {
+                            var buffer = new byte[8192];
+                            long totalRead = 0;
+                            int bytesRead;
+                            bool notifiedMidway = false;
+
+                            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                            {
+                                await fileStream.WriteAsync(buffer, 0, bytesRead);
+                                totalRead += bytesRead;
+
+                                var progress = (double)totalRead / totalBytes * 100;
+                                if (progress > 50 && !notifiedMidway)
+                                {
+                                    NotificationManager.Show(NotificationLevel.Info, "Downloading Video Component... (50%)", null, false);
+                                    notifiedMidway = true;
+                                }
+                            }
+                        }
+                    }
                     
-                    await File.WriteAllBytesAsync(zipPath, zipBytes);
-                    
+                    NotificationManager.Show(NotificationLevel.Info, "Extracting...", null, false);
+
                     using (var archive = ZipFile.OpenRead(zipPath))
                     {
                         foreach (var entry in archive.Entries)
@@ -83,13 +102,13 @@ namespace Quaver.Shared.Helpers
                     }
                     
                     File.Delete(zipPath);
-                    NotificationManager.Show(NotificationLevel.Success, "Video Component Ready! Please restart map.", null, true);
+                    NotificationManager.Show(NotificationLevel.Success, "Video Ready! Please restart map.", null, true);
                     return true;
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                NotificationManager.Show(NotificationLevel.Error, "Auto-Download failed: " + e.Message, null, true);
+                NotificationManager.Show(NotificationLevel.Error, "Download failed. Please install FFmpeg manually.", null, true);
                 return false;
             }
         }
