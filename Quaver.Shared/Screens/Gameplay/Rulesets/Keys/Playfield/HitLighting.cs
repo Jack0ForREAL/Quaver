@@ -1,10 +1,3 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
-*/
-
 using System;
 using Microsoft.Xna.Framework;
 using MonoGame.Extended;
@@ -22,54 +15,38 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
     public class HitLighting : AnimatableSprite
     {
         private GameplayPlayfieldKeys Playfield { get; }
-
         private int ColumnIndex { get; }
-
-        /// <summary>
-        ///     If we're curerntly holding a long note.
-        ///     It'll loop through the animation until we aren't anymore.
-        /// </summary>
         private bool IsHoldingLongNote { get; set; }
-
-        /// <summary>
-        ///     If we're currently performing a one frame animation.
-        /// </summary>
         private bool PerformingOneFrameAnimation { get; set; }
-
-        /// <summary>
-        ///     Dictates if we're currently decreasing the alpha in the one frame LN
-        ///     hold animation.
-        /// </summary>
         private bool DecreasingAlphaInAnimation { get; set; }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
+        // v2: Optimization - Reusable objects
+        private ScalableVector2 _cachedSize;
+        private ScalableVector2 _cachedPosition;
+
         public HitLighting(GameplayPlayfieldKeys playfield, int columnIndex)
             : base(SkinManager.Skin.Keys[MapManager.Selected.Value.Mode].HitLighting)
         {
             Playfield = playfield;
             ColumnIndex = columnIndex;
+            
+            // v2: Initialize cache
+            _cachedSize = new ScalableVector2(0, 0);
+            _cachedPosition = new ScalableVector2(0, 0);
+            Size = _cachedSize;
+            Position = _cachedPosition;
 
             FinishedLooping += OnLoopCompletion;
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="gameTime"></param>
         public override void Update(GameTime gameTime)
         {
-            // Performs a one animation frame if possible.
             if (PerformingOneFrameAnimation)
                 PerformOneFrameAnimation(gameTime);
 
             base.Update(gameTime);
         }
 
-        /// <summary>
-        ///     When hitting an object, it'll loop through once.
-        /// </summary>
         public void PerformHitAnimation(bool isLongNote, Judgement judgement = Judgement.Ghost)
         {
             var skin = SkinManager.Skin.Keys[MapManager.Selected.Value.Mode];
@@ -80,10 +57,7 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
             else
                 Tint = Color.White;
 
-            // First begin by replacing the frames
             ReplaceFrames(IsHoldingLongNote ? skin.HoldLighting : skin.HitLighting);
-
-            // Go to the first frame and reset each of the properties
             ChangeTo(0);
             Visible = true;
             Alpha = 1;
@@ -91,39 +65,34 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
             var skinScale = IsHoldingLongNote ? skin.HoldLightingScale : skin.HitLightingScale;
             var scale = skinScale / 100f;
 
-            Size = new ScalableVector2(Image.Width * scale, Image.Height * scale);
+            // v2: Optimization - Update existing Size object
+            _cachedSize.X.Value = Image.Width * scale;
+            _cachedSize.Y.Value = Image.Height * scale;
 
-            var relativeRect = new RectangleF(0, 0, RelativeRectangle.Width, RelativeRectangle.Height);
-            var pos = GraphicsHelper.AlignRect(Alignment.MidCenter, relativeRect, Playfield.Stage.Receptors[ColumnIndex].ScreenRectangle);
+            // v2: Optimization - AlignRect optimization using stack vars
+            // We avoid creating new RectangleF here if we can helper it, but the AlignRect returns Vector2
+            var receptorRect = Playfield.Stage.Receptors[ColumnIndex].ScreenRectangle;
+            var relativeRect = new RectangleF(0, 0, _cachedSize.X.Value, _cachedSize.Y.Value);
+            var pos = GraphicsHelper.AlignRect(Alignment.MidCenter, relativeRect, receptorRect);
+            var fgRect = Playfield.ForegroundContainer.ScreenRectangle;
 
-            Position = new ScalableVector2(pos.X - Playfield.ForegroundContainer.ScreenRectangle.X + skin.HitLightingX,
-                pos.Y - Playfield.ForegroundContainer.ScreenRectangle.Y + skin.HitLightingY);
+            // v2: Optimization - Update existing Position object
+            _cachedPosition.X.Value = pos.X - fgRect.X + skin.HitLightingX;
+            _cachedPosition.Y.Value = pos.Y - fgRect.Y + skin.HitLightingY;
 
-            // Rotation
             var rotate = IsHoldingLongNote ? skin.HoldLightingColumnRotation : skin.HitLightingColumnRotation;
+            Rotation = rotate ? GameplayHitObjectKeys.GetObjectRotation(Playfield.Ruleset.Map.Mode, ColumnIndex) : 0;
 
-            if (rotate)
-                Rotation = GameplayHitObjectKeys.GetObjectRotation(Playfield.Ruleset.Map.Mode, ColumnIndex);
-            else
-                Rotation = 0;
-
-            // If we are performing a one frame animation however, we don't want to handle it
-            // through standard looping, but rather through our own rolled out animation.
             PerformingOneFrameAnimation = Frames.Count == 1;
 
-            if (PerformingOneFrameAnimation)
-                return;
+            if (PerformingOneFrameAnimation) return;
 
-            // Standard looping animations.
             if (!IsHoldingLongNote)
                 StartLoop(Direction.Forward, skin.HitLightingFps, 1);
             else
                 StartLoop(Direction.Forward, skin.HoldLightingFps);
         }
 
-        /// <summary>
-        ///     Stops holding (looping forever). Used when the user isn't holding the LN anymore.
-        /// </summary>
         public void StopHolding()
         {
             StopLoop();
@@ -132,63 +101,38 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
             PerformingOneFrameAnimation = false;
         }
 
-        /// <summary>
-        ///     When the animation loop is completed, we'll dictate
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
         private void OnLoopCompletion(object sender, EventArgs e)
         {
-            // If the loop is done and this isn't a long note, then we'll want to make it invisible.
-            if (IsHoldingLongNote)
-                return;
-
+            if (IsHoldingLongNote) return;
             Visible = false;
             PerformingOneFrameAnimation = false;
         }
 
-        /// <summary>
-        ///     Performs all one frame animations for both normal notes and LN holding.
-        /// </summary>
-        /// <param name="gameTime"></param>
         private void PerformOneFrameAnimation(GameTime gameTime)
         {
             var dt = gameTime.ElapsedGameTime.TotalMilliseconds;
+            // v2: Optimization - Precompute change
+            var change = (float)(dt / (120 * AudioEngine.Track.Rate));
 
-            // Animation for normal HitObjects
             if (!IsHoldingLongNote)
             {
-                Alpha -= AlphaChangePerFrame(dt);
-
-                if (Alpha <= 0)
-                    FinishedLooping?.Invoke(this, null);
+                Alpha -= change;
+                if (Alpha <= 0) FinishedLooping?.Invoke(this, null);
             }
-            // Animation for LN HitObjects.
-            // Pulsate the alpha of it.
             else
             {
-                if (Alpha >= 1)
-                    DecreasingAlphaInAnimation = true;
+                if (Alpha >= 1) DecreasingAlphaInAnimation = true;
 
                 if (DecreasingAlphaInAnimation)
                 {
-                    Alpha -= AlphaChangePerFrame(dt);
-
-                    if (Alpha <= 0)
-                        DecreasingAlphaInAnimation = false;
+                    Alpha -= change;
+                    if (Alpha <= 0) DecreasingAlphaInAnimation = false;
                 }
                 else
                 {
-                    Alpha += AlphaChangePerFrame(dt);
+                    Alpha += change;
                 }
             }
         }
-
-        /// <summary>
-        ///     The amount of alpha change per frame when doing one frame animations.
-        /// </summary>
-        /// <param name="dt"></param>
-        /// <returns></returns>
-        private static float AlphaChangePerFrame(double dt) => (float)(dt / (120 * AudioEngine.Track.Rate));
     }
 }
