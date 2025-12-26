@@ -1,10 +1,3 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
-*/
-
 using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
@@ -30,49 +23,30 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys
 {
     public class GameplayRulesetKeys : GameplayRuleset
     {
-        /// <summary>
-        ///     Reference to the timing line manager.
-        ///
-        ///     It gets initialized in GameplayRulesetKeys because it relies on both
-        ///     the playfield and the HitObjectManager.
-        ///
-        ///     We can't intiialize it in Playfield as that gets created first.
-        ///
-        ///     This is a list because multiple scroll directions require multiple Timing Line Managers.
-        ///
-        /// </summary>
         public List<TimingLineManager> TimingLineManagers { get; } = new List<TimingLineManager>();
 
-        /// <summary>
-        ///     Dictates if we are currently using downscroll or not.
-        /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException"></exception>
-        internal static ScrollDirection ScrollDirection
+        // v2: Optimization - Cache this. Accessing ConfigManager/MapManager every frame is slow.
+        private ScrollDirection? _cachedScrollDirection;
+        internal ScrollDirection ScrollDirection
         {
             get
             {
-                if (MapManager.Selected.Value.Qua != null)
-                    return ConfigManager.ScrollDirections[MapManager.Selected.Value.Qua.Mode].Value;
+                if (_cachedScrollDirection.HasValue)
+                    return _cachedScrollDirection.Value;
 
-                return ConfigManager.ScrollDirections[GameMode.Keys4].Value;
+                if (MapManager.Selected.Value.Qua != null)
+                    _cachedScrollDirection = ConfigManager.ScrollDirections[MapManager.Selected.Value.Qua.Mode].Value;
+                else
+                    _cachedScrollDirection = ConfigManager.ScrollDirections[GameMode.Keys4].Value;
+
+                return _cachedScrollDirection.Value;
             }
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="screen"></param>
-        /// <param name="map"></param>
         public GameplayRulesetKeys(GameplayScreen screen, Qua map) : base(screen, map) => InitializeTimingLines();
 
-        /// <summary>
-        ///     Generate Timing Line Managers for scroll direction. Will create multiple managers if  multiple scroll directions exist.
-        /// </summary>
-        /// <param name="keys"></param>
-        /// <param name="direction"></param>
         private void InitializeTimingLines()
         {
-            // Do not create timing lines if DisplayTimingLines config is turned off.
             if (!ConfigManager.DisplayTimingLines.Value)
                 return;
 
@@ -91,26 +65,18 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys
             TimingLineManagers.Add(new TimingLineManager(this, direction, playfield.TimingLinePositionY[0], playfield.Width, 0));
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        ///
-        /// </summary>
-        /// <param name="gameTime"></param>
         public override void Update(GameTime gameTime)
         {
             base.Update(gameTime);
 
-            // This should be _after_ base.Update, since this uses HitObjectManager.CurrentTrackPosition,
-            // which is updated in base.Update.
-            if (TimingLineManagers != null)
-                foreach (var manager in TimingLineManagers) manager.UpdateTimingLines();
+            // Optimization: Avoid foreach enumerator allocation if list is empty or small
+            var count = TimingLineManagers.Count;
+            for (var i = 0; i < count; i++)
+            {
+                TimingLineManagers[i].UpdateTimingLines();
+            }
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="map"></param>
-        /// <returns></returns>
         protected override ScoreProcessor CreateScoreProcessor(Qua map)
         {
             var windows = JudgementWindowsDatabaseCache.Selected.Value;
@@ -130,29 +96,11 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys
             processor.SteamId = SteamUser.GetSteamID().m_SteamID;
             processor.UserId = OnlineManager.Self?.OnlineUser?.Id ?? 0;
 
-            Logger.Debug("---- Health Weighting ----", LogType.Runtime);
-
-            foreach (var weight in processor.JudgementHealthWeighting)
-                Logger.Debug($"{weight.Key}: {weight.Value}", LogType.Runtime);
-
             return processor;
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
         protected override void CreatePlayfield() => Playfield = new GameplayPlayfieldKeys(Screen, this);
-
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <returns></returns>
         protected override HitObjectManager CreateHitObjectManager() => new HitObjectManagerKeys(this, Map);
-
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <returns></returns>
         protected override IGameplayInputManager CreateInputManager() => new KeysInputManager(this, Map.Mode);
     }
 }
