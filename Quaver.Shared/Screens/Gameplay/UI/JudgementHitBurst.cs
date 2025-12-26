@@ -1,10 +1,3 @@
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
-*/
-
 using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
@@ -19,66 +12,31 @@ using Wobble.Graphics.Sprites;
 
 namespace Quaver.Shared.Screens.Gameplay.UI
 {
-    /// <inheritdoc />
-    /// <summary>
-    ///     Animatable sprite used when a user hits an object.
-    ///     It is capable of switching  judgements and performing the loop animation once.
-    /// </summary>
     public class JudgementHitBurst : AnimatableSprite
     {
-        /// <summary>
-        /// </summary>
         private GameplayScreen Screen { get; }
-
-        /// <summary>
-        ///     If we are currently animating the hit burst with only one frame.
-        /// </summary>
         public bool IsAnimatingWithOneFrame { get; private set; }
-
-        /// <summary>
-        ///     Timer for bumping the burst if <see cref="IsAnimatingWithOneFrame"/>
-        /// </summary>
         private readonly CountdownTimer bumpTimer;
-
-        /// <summary>
-        ///     Time to bump
-        /// </summary>
         private readonly TimeSpan bumpTime;
-
-        /// <summary>
-        ///     Start Y of bumping
-        /// </summary>
         private float bumpY;
-
-        /// <summary>
-        ///     The original size of the hit burst.
-        /// </summary>
-        private Vector2 OriginalSize { get; }
-
-        /// <summary>
-        ///     The original Y position of the hit burst.
-        /// </summary>
         public float OriginalPosY { get; set; }
-
         private SkinKeys Skin => SkinManager.Skin.Keys[Screen.Map.Mode];
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="screen"></param>
-        /// <param name="frames"></param>
-        /// <param name="size"></param>
-        /// <param name="posY"></param>
+        // v2: Optimization - Reusable ScalableVector2 to prevent GC allocation
+        private ScalableVector2 _cachedSize;
+
         public JudgementHitBurst(GameplayScreen screen, List<Texture2D> frames, Vector2 size, float posY) : base(frames)
         {
             Screen = screen;
             OriginalPosY = posY;
-            OriginalSize = size;
-            Size = new ScalableVector2(OriginalSize.X, OriginalSize.Y);
+            
+            // v2: Initialize the cached size object once
+            _cachedSize = new ScalableVector2(size.X, size.Y);
+            Size = _cachedSize;
+            
             Y = OriginalPosY;
             Visible = false;
 
-            // Whenever the judgement is finished looping, then we'll make it invisible.
             FinishedLooping += (o, e) => Visible = false;
 
             bumpTime = TimeSpan.FromMilliseconds(Skin.JudgementHitBurstBumpTime);
@@ -93,39 +51,25 @@ namespace Quaver.Shared.Screens.Gameplay.UI
             Y = EasingFunctions.EaseOutExpo(bumpY, OriginalPosY, (float)t);
         }
 
-        /// <inheritdoc />
-        /// <summary>
-        /// </summary>
-        /// <param name="gameTime"></param>
         public override void Update(GameTime gameTime)
         {
-            PerformOneFrameAnimation(gameTime);
+            if (IsAnimatingWithOneFrame)
+                PerformOneFrameAnimation(gameTime);
 
             base.Update(gameTime);
             bumpTimer.Update(gameTime);
         }
 
-        /// <summary>
-        ///     Replaces the animation frames with ones pertaining to the given judgement.
-        /// </summary>
-        /// <param name="j"></param>
         public void ChangeJudgementFrames(Judgement j)
         {
-            if (IsLooping)
-                StopLoop();
-
+            if (IsLooping) StopLoop();
             ReplaceFrames(SkinManager.Skin.Judgements[j]);
         }
 
-        /// <summary>
-        ///     Switches to the correct judgement and performs a loop for it.
-        /// </summary>
-        /// <param name="j"></param>
         public void PerformJudgementAnimation(Judgement j)
         {
             ChangeJudgementFrames(j);
             Visible = true;
-
             Alpha = 1;
 
             if (Frames.Count != 1)
@@ -144,28 +88,24 @@ namespace Quaver.Shared.Screens.Gameplay.UI
             var firstFrame = Frames[0];
             var scale = SkinManager.Skin.Keys[Screen.Map.Mode].JudgementHitBurstScale / firstFrame.Height;
 
-            var (x, y) = new Vector2(firstFrame.Width, firstFrame.Height) * scale;
-            Size = new ScalableVector2(x, y);
+            // v2: Optimization - Mutate existing vector instead of creating new ScalableVector2
+            var width = firstFrame.Width * scale;
+            var height = firstFrame.Height * scale;
+            
+            // Update the backing scalable vector values directly if possible, or create once
+            _cachedSize.X.Value = width;
+            _cachedSize.Y.Value = height;
         }
 
-        /// <summary>
-        ///     If there is only 1 frame in the list, then we'll roll out our own animations here.
-        /// </summary>
-        /// <param name="gameTime"></param>
         private void PerformOneFrameAnimation(GameTime gameTime)
         {
-            if (!IsAnimatingWithOneFrame)
-                return;
+            if (!IsAnimatingWithOneFrame) return;
 
             var dt = gameTime.ElapsedGameTime.TotalMilliseconds;
-
-            // Tween the position if need be
             if (bumpTimer.State == TimerState.Completed)
             {
                 Alpha = MathHelper.Lerp(Alpha, 0, (float)Math.Min(dt / 240, 1));
-
-                if (Alpha <= 0)
-                    IsAnimatingWithOneFrame = false;
+                if (Alpha <= 0) IsAnimatingWithOneFrame = false;
             }
         }
     }
