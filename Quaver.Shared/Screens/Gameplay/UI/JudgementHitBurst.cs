@@ -22,18 +22,11 @@ namespace Quaver.Shared.Screens.Gameplay.UI
         public float OriginalPosY { get; set; }
         private SkinKeys Skin => SkinManager.Skin.Keys[Screen.Map.Mode];
 
-        // v2: Optimization - Reusable ScalableVector2 to prevent GC allocation
-        private ScalableVector2 _cachedSize;
-
         public JudgementHitBurst(GameplayScreen screen, List<Texture2D> frames, Vector2 size, float posY) : base(frames)
         {
             Screen = screen;
             OriginalPosY = posY;
-            
-            // v2: Initialize the cached size object once
-            _cachedSize = new ScalableVector2(size.X, size.Y);
-            Size = _cachedSize;
-            
+            Size = new ScalableVector2(size.X, size.Y);
             Y = OriginalPosY;
             Visible = false;
 
@@ -87,14 +80,9 @@ namespace Quaver.Shared.Screens.Gameplay.UI
 
             var firstFrame = Frames[0];
             var scale = SkinManager.Skin.Keys[Screen.Map.Mode].JudgementHitBurstScale / firstFrame.Height;
-
-            // v2: Optimization - Mutate existing vector instead of creating new ScalableVector2
-            var width = firstFrame.Width * scale;
-            var height = firstFrame.Height * scale;
             
-            // Update the backing scalable vector values directly if possible, or create once
-            _cachedSize.X.Value = width;
-            _cachedSize.Y.Value = height;
+            // Reverted to standard assignment to fix CS1612
+            Size = new ScalableVector2(firstFrame.Width * scale, firstFrame.Height * scale);
         }
 
         private void PerformOneFrameAnimation(GameTime gameTime)
