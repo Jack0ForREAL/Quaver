@@ -25,21 +25,18 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys
     {
         public List<TimingLineManager> TimingLineManagers { get; } = new List<TimingLineManager>();
 
-        // v2: Optimization - Cache this. Accessing ConfigManager/MapManager every frame is slow.
-        private ScrollDirection? _cachedScrollDirection;
-        internal ScrollDirection ScrollDirection
+        /// <summary>
+        ///     Dictates if we are currently using downscroll or not.
+        ///     Reverted to static to fix build errors.
+        /// </summary>
+        internal static ScrollDirection ScrollDirection
         {
             get
             {
-                if (_cachedScrollDirection.HasValue)
-                    return _cachedScrollDirection.Value;
-
                 if (MapManager.Selected.Value.Qua != null)
-                    _cachedScrollDirection = ConfigManager.ScrollDirections[MapManager.Selected.Value.Qua.Mode].Value;
-                else
-                    _cachedScrollDirection = ConfigManager.ScrollDirections[GameMode.Keys4].Value;
+                    return ConfigManager.ScrollDirections[MapManager.Selected.Value.Qua.Mode].Value;
 
-                return _cachedScrollDirection.Value;
+                return ConfigManager.ScrollDirections[GameMode.Keys4].Value;
             }
         }
 
@@ -68,12 +65,12 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys
         public override void Update(GameTime gameTime)
         {
             base.Update(gameTime);
-
-            // Optimization: Avoid foreach enumerator allocation if list is empty or small
-            var count = TimingLineManagers.Count;
-            for (var i = 0; i < count; i++)
+            
+            if (TimingLineManagers != null)
             {
-                TimingLineManagers[i].UpdateTimingLines();
+                // Simple for-loop is slightly faster than foreach
+                for (var i = 0; i < TimingLineManagers.Count; i++)
+                    TimingLineManagers[i].UpdateTimingLines();
             }
         }
 
