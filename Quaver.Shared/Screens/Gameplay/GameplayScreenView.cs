@@ -351,19 +351,22 @@ namespace Quaver.Shared.Screens.Gameplay
 
                         if (totalRead < frameSize)
                         {
-                            System.Buffers.ArrayPool<byte>.Shared.Return(data);
+                            // FIX: Return to FREE POOL, not System Pool
+                            FreeBufferPool.Push(data);
                             break;
                         }
 
                         var frame = new DecodedFrame { Index = frameIndex++, PixelData = data };
                         if (!VideoBuffer.TryAdd(frame.Index, frame))
                         {
-                            System.Buffers.ArrayPool<byte>.Shared.Return(data);
+                            // FIX: Return to FREE POOL, not System Pool
+                            FreeBufferPool.Push(data);
                         }
                     }
                     catch
                     {
-                        System.Buffers.ArrayPool<byte>.Shared.Return(data);
+                        // FIX: Return to FREE POOL, not System Pool
+                        FreeBufferPool.Push(data);
                         break;
                     }
                 }
@@ -422,11 +425,13 @@ namespace Quaver.Shared.Screens.Gameplay
             }
             catch 
             {
-                // If upload fails, just return buffer and continue (don't crash)
+                // If upload fails, just return buffer and continue
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(frameToUpload.PixelData);
+                // FIX: Return to FREE POOL, not System Pool
+                if (IsPoolInitialized)
+                    FreeBufferPool.Push(frameToUpload.PixelData);
             }
         }
 
@@ -524,9 +529,9 @@ namespace Quaver.Shared.Screens.Gameplay
                 try { FfmpegProcess.Kill(); } catch { }
             }
 
-            foreach (var kvp in VideoBuffer)
-                System.Buffers.ArrayPool<byte>.Shared.Return(kvp.Value.PixelData);
+            // FIX: DO NOT RETURN TO ARRAY POOL. Just clear.
             VideoBuffer.Clear();
+            FreeBufferPool.Clear(); 
 
             if (RingTextures != null)
             {
