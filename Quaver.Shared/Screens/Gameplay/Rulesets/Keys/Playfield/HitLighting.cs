@@ -20,22 +20,11 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
         private bool PerformingOneFrameAnimation { get; set; }
         private bool DecreasingAlphaInAnimation { get; set; }
 
-        // v2: Optimization - Reusable objects
-        private ScalableVector2 _cachedSize;
-        private ScalableVector2 _cachedPosition;
-
         public HitLighting(GameplayPlayfieldKeys playfield, int columnIndex)
             : base(SkinManager.Skin.Keys[MapManager.Selected.Value.Mode].HitLighting)
         {
             Playfield = playfield;
             ColumnIndex = columnIndex;
-            
-            // v2: Initialize cache
-            _cachedSize = new ScalableVector2(0, 0);
-            _cachedPosition = new ScalableVector2(0, 0);
-            Size = _cachedSize;
-            Position = _cachedPosition;
-
             FinishedLooping += OnLoopCompletion;
         }
 
@@ -65,20 +54,17 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
             var skinScale = IsHoldingLongNote ? skin.HoldLightingScale : skin.HitLightingScale;
             var scale = skinScale / 100f;
 
-            // v2: Optimization - Update existing Size object
-            _cachedSize.X.Value = Image.Width * scale;
-            _cachedSize.Y.Value = Image.Height * scale;
+            // Reverted to standard assignment to fix CS1612
+            Size = new ScalableVector2(Image.Width * scale, Image.Height * scale);
 
-            // v2: Optimization - AlignRect optimization using stack vars
-            // We avoid creating new RectangleF here if we can helper it, but the AlignRect returns Vector2
-            var receptorRect = Playfield.Stage.Receptors[ColumnIndex].ScreenRectangle;
-            var relativeRect = new RectangleF(0, 0, _cachedSize.X.Value, _cachedSize.Y.Value);
-            var pos = GraphicsHelper.AlignRect(Alignment.MidCenter, relativeRect, receptorRect);
-            var fgRect = Playfield.ForegroundContainer.ScreenRectangle;
+            var relativeRect = new RectangleF(0, 0, Size.X.Value, Size.Y.Value);
+            var pos = GraphicsHelper.AlignRect(Alignment.MidCenter, relativeRect, Playfield.Stage.Receptors[ColumnIndex].ScreenRectangle);
 
-            // v2: Optimization - Update existing Position object
-            _cachedPosition.X.Value = pos.X - fgRect.X + skin.HitLightingX;
-            _cachedPosition.Y.Value = pos.Y - fgRect.Y + skin.HitLightingY;
+            // Reverted to standard assignment to fix CS1612
+            Position = new ScalableVector2(
+                pos.X - Playfield.ForegroundContainer.ScreenRectangle.X + skin.HitLightingX,
+                pos.Y - Playfield.ForegroundContainer.ScreenRectangle.Y + skin.HitLightingY
+            );
 
             var rotate = IsHoldingLongNote ? skin.HoldLightingColumnRotation : skin.HitLightingColumnRotation;
             Rotation = rotate ? GameplayHitObjectKeys.GetObjectRotation(Playfield.Ruleset.Map.Mode, ColumnIndex) : 0;
@@ -111,7 +97,6 @@ namespace Quaver.Shared.Screens.Gameplay.Rulesets.Keys.Playfield
         private void PerformOneFrameAnimation(GameTime gameTime)
         {
             var dt = gameTime.ElapsedGameTime.TotalMilliseconds;
-            // v2: Optimization - Precompute change
             var change = (float)(dt / (120 * AudioEngine.Track.Rate));
 
             if (!IsHoldingLongNote)
