@@ -30,7 +30,7 @@ namespace Quaver.Shared.Audio
 
         /// <summary>
         ///     v2: Gets the smoothed, interpolated time.
-        ///     This decouples visual smoothness from audio buffer updates, fixing "jittery" notes on high refresh rates.
+        ///     This decouples visual smoothness from audio buffer updates.
         /// </summary>
         public static double Time
         {
@@ -38,7 +38,6 @@ namespace Quaver.Shared.Audio
             {
                 if (Track == null || Track.IsDisposed) return 0;
 
-                // If stopped, just return track time
                 if (!Track.IsPlaying)
                 {
                     _isHybridRunning = false;
@@ -46,7 +45,6 @@ namespace Quaver.Shared.Audio
                     return Track.Time;
                 }
 
-                // If we just started playing, sync the clock
                 if (!_isHybridRunning)
                 {
                     _isHybridRunning = true;
@@ -58,20 +56,15 @@ namespace Quaver.Shared.Audio
                 double audioTime = Track.Time;
                 double clockTime = HybridClock.Elapsed.TotalMilliseconds * Track.Rate;
                 double projectedTime = _lastAudioTime + clockTime;
-
-                // Sync logic: If the audio driver has moved significantly (buffer update), re-sync.
-                // We allow a 20ms drift window before hard-snapping to prevent micro-stutters.
                 double drift = Math.Abs(projectedTime - audioTime);
                 
                 if (drift > 20) 
                 {
-                     // Hard sync (Audio driver update or seek happened)
                     _lastAudioTime = audioTime;
                     HybridClock.Restart();
                     return audioTime;
                 }
 
-                // Return the smooth projected time for visuals
                 return projectedTime;
             }
         }
@@ -90,7 +83,6 @@ namespace Quaver.Shared.Audio
                 if (Track != null && !Track.IsDisposed)
                     Track.Dispose();
 
-                // v2: Optimization - Explicitly dispose old clock state
                 HybridClock.Reset();
                 _isHybridRunning = false;
 
@@ -141,7 +133,6 @@ namespace Quaver.Shared.Audio
 
         public static void SeekTrackToNearestSnap(Qua map, Direction direction, int snap)
         {
-            // Use the raw Track.Time for seeking logic, not the interpolated time
             var seekTime = GetNearestSnapTimeFromTime(map, direction, snap, Track.Time);
 
             if (seekTime < 0 || seekTime > Track.Length)
@@ -149,7 +140,6 @@ namespace Quaver.Shared.Audio
 
             Track.Seek(seekTime);
             
-            // v2: Reset hybrid clock on seek
             HybridClock.Restart();
             _lastAudioTime = seekTime;
         }
@@ -187,9 +177,28 @@ namespace Quaver.Shared.Audio
             return (Math.Round((pointToSnap - point.StartTime) / snapTimePerBeat) - 1) * snapTimePerBeat + point.StartTime;
         }
 
+        /// <summary>
+        ///     Loads an audio track for a specific map.
+        ///     Restored for V2 compatibility.
+        /// </summary>
+        public static IAudioTrack LoadMapAudioTrack(Map map)
+        {
+            IAudioTrack track;
+
+            try
+            {
+                track = new AudioTrack(MapManager.GetAudioPath(map), false, false);
+            }
+            catch (Exception)
+            {
+                track = new AudioTrackVirtual(map.SongLength + 5000);
+            }
+
+            return track;
+        }
+
         public static void MeasureAudioStartDelay()
         {
-            // Kept primarily for legacy compatibility, but v2 relies less on this hack
             var prevTrack = Track;
             Track = new AudioTrack(GameBase.Game.Resources.Get($"Quaver.Resources/Maps/Offset/offset.mp3"));
             Track.Volume = 0;
