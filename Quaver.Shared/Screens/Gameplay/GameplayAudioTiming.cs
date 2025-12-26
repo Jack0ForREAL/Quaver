@@ -5,6 +5,7 @@ using Quaver.Shared.Audio;
 using Quaver.Shared.Config;
 using Quaver.Shared.Modifiers;
 using Quaver.Shared.Screens.Tournament.Gameplay;
+using Wobble; // <--- This was missing!
 using Wobble.Audio.Tracks;
 using Wobble.Logging;
 using MathHelper = Microsoft.Xna.Framework.MathHelper;
@@ -87,19 +88,13 @@ namespace Quaver.Shared.Screens.Gameplay
                 catch { /* ignored */ }
             }
 
-            // v2: Simplified Timing Logic
-            // The previous code had complex correction logic that often fought with the audio driver.
-            // By utilizing the new AudioEngine.Time (Hybrid Clock), we can trust the time value much more.
-            
+            // v2: Simplified Timing Logic (Hybrid Clock)
             if (AudioEngine.Track.IsPlaying)
             {
-                // Direct sync to the hybrid clock. 
-                // This ensures visuals are perfectly interpolated between frames.
                 Time = AudioEngine.Time;
             }
             else
             {
-                // Fallback if track stopped (e.g. end of song)
                 Time += gameTime.ElapsedGameTime.TotalMilliseconds * AudioEngine.Track.Rate;
             }
         }
