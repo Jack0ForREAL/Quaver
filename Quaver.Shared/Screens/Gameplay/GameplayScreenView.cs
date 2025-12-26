@@ -97,7 +97,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private SpriteBatch VideoBatch;
         private SpriteFont DebugFont; 
-        private Texture2D DebugBoxTexture; // FIX: Manually created texture for box
+        private Texture2D DebugBoxTexture; 
         private int VideoWidth, VideoHeight;
         private double FrameTimeMs;
         private int LastUploadedIndex = -1;
@@ -106,6 +106,7 @@ namespace Quaver.Shared.Screens.Gameplay
         private double VideoUpdateAccumulator = 0;
         private ConcurrentStack<byte[]> FreeBufferPool = new ConcurrentStack<byte[]>();
         private bool IsPoolInitialized = false;
+        private bool IsVideoCrashed = false; // Failsafe flag
 
         public GameplayScreenView(Screen screen) : base(screen)
         {
@@ -116,26 +117,28 @@ namespace Quaver.Shared.Screens.Gameplay
 
             CreateBackground();
 
-            // Init Video Batch & Font
+            // Init Video Batch & Font (SAFE MODE)
             if (!Screen.IsSongSelectPreview)
             {
                 try {
                     VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
                     
-                    // FIX: Create a 1x1 white texture for the debug box
+                    // Create 1x1 white pixel for debug box
                     DebugBoxTexture = new Texture2D(GameBase.Game.GraphicsDevice, 1, 1);
                     DebugBoxTexture.SetData(new[] { Color.White });
 
-                    // Load font safely
                     try { DebugFont = GameBase.Game.Content.Load<SpriteFont>("Fonts/WidthFixed"); } catch {}
                     
                     ConfigureVideoMod();
 
                     if (ConfigManager.VideoModEnabled.Value)
                     {
+                        // Fire and forget the video loader
                         RunVideoLoaderMp4(VideoLoaderToken.Token);
                     }
-                } catch { }
+                } catch { 
+                    IsVideoCrashed = true; 
+                }
             }
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
@@ -243,75 +246,76 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private void ConfigureVideoMod()
         {
-            if (ConfigManager.VideoModAutoConfiguration.Value)
-            {
-                int ram = VideoUtils.GetTotalRamMB();
-                int threads = VideoUtils.GetCpuThreads();
-                MaxRamUsageBytes = (long)(Math.Min(ram / 2, 4096)) * 1024 * 1024;
-                DecoderThreadCount = Math.Clamp(threads / 2, 1, 4);
-            }
-            else
-            {
-                MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
-                DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
+            try {
+                if (ConfigManager.VideoModAutoConfiguration.Value)
+                {
+                    int ram = VideoUtils.GetTotalRamMB();
+                    int threads = VideoUtils.GetCpuThreads();
+                    MaxRamUsageBytes = (long)(Math.Min(ram / 2, 4096)) * 1024 * 1024;
+                    DecoderThreadCount = Math.Clamp(threads / 2, 1, 4);
+                }
+                else
+                {
+                    MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
+                    DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
+                }
+            } catch {
+                MaxRamUsageBytes = 1024 * 1024 * 1024;
+                DecoderThreadCount = 2;
             }
         }
 
         private async void RunVideoLoaderMp4(CancellationToken token)
         {
             if (Screen.IsSongSelectPreview) return;
-            if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
-
-            var currentMap = MapManager.Selected.Value;
-            if (currentMap == null) return;
-
-            var fileName = ConfigManager.VideoModHighQuality.Value ? "video.mp4" : "video_low.mp4";
-            var videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
-
-            if (!File.Exists(videoPath))
+            try 
             {
-                var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
-                var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
-                if (File.Exists(otherPath)) videoPath = otherPath;
-                else
+                if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
+
+                var currentMap = MapManager.Selected.Value;
+                if (currentMap == null) return;
+
+                var fileName = ConfigManager.VideoModHighQuality.Value ? "video.mp4" : "video_low.mp4";
+                var videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
+
+                if (!File.Exists(videoPath))
                 {
-                    if (ConfigManager.VideoModEnabled.Value && !Screen.IsSongSelectPreview)
-                       NotificationManager.Show(NotificationLevel.Info, "No video file found for this map.", null, true);
-                    return;
+                    var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
+                    var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
+                    if (File.Exists(otherPath)) videoPath = otherPath;
+                    else return;
                 }
-            }
 
-            var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
-            if (width == 0) return;
+                var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
+                if (width == 0) return;
 
-            int targetH = ConfigManager.VideoModTargetHeight.Value;
-            if (targetH <= 0) targetH = height;
-            targetH = Math.Min(targetH, height);
-            float aspect = (float)width / height;
-            int targetW = (int)(targetH * aspect);
-            if (targetW % 2 != 0) targetW++;
-            if (targetH % 2 != 0) targetH++;
+                // RESOLUTION
+                int targetH = ConfigManager.VideoModTargetHeight.Value;
+                if (targetH <= 0) targetH = height;
+                targetH = Math.Min(targetH, height);
+                float aspect = (float)width / height;
+                int targetW = (int)(targetH * aspect);
+                if (targetW % 2 != 0) targetW++;
+                if (targetH % 2 != 0) targetH++;
 
-            VideoWidth = targetW;
-            VideoHeight = targetH;
-            FrameTimeMs = frameTime;
+                VideoWidth = targetW;
+                VideoHeight = targetH;
+                FrameTimeMs = frameTime;
 
-            bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
-            int bytesPerPixel = use32Bit ? 4 : 2;
-            string pixelFormat = use32Bit ? "rgba" : "rgb565le";
-            
-            int frameSize = VideoWidth * VideoHeight * bytesPerPixel;
-            
-            int bufferCount = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
-            int cap = use32Bit ? 200 : 400;
-            bufferCount = Math.Clamp(bufferCount, 10, cap);
+                // CONFIGURATION
+                bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
+                int bytesPerPixel = use32Bit ? 4 : 2;
+                string pixelFormat = use32Bit ? "rgba" : "rgb565le";
+                
+                int frameSize = VideoWidth * VideoHeight * bytesPerPixel;
+                int bufferCount = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
+                int cap = use32Bit ? 200 : 400;
+                bufferCount = Math.Clamp(bufferCount, 10, cap);
 
-            for (int i = 0; i < bufferCount; i++)
-                FreeBufferPool.Push(new byte[frameSize]);
-            IsPoolInitialized = true;
+                for (int i = 0; i < bufferCount; i++)
+                    FreeBufferPool.Push(new byte[frameSize]);
+                IsPoolInitialized = true;
 
-            try
-            {
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = VideoUtils.FFmpegPath,
@@ -364,7 +368,11 @@ namespace Quaver.Shared.Screens.Gameplay
                     }
                 }
             }
-            catch (Exception e) { LogVideoError("Loader Error: " + e.Message); }
+            catch (Exception e) 
+            { 
+                IsVideoCrashed = true; 
+                LogVideoError("Loader Error: " + e.Message); 
+            }
             finally
             {
                 if (FfmpegProcess != null && !FfmpegProcess.HasExited)
@@ -386,7 +394,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private void UpdateAndUploadVideoTexture()
         {
-            if (AudioEngine.Track == null || VideoWidth == 0 || FrameTimeMs == 0) return;
+            if (IsVideoCrashed || AudioEngine.Track == null || VideoWidth == 0 || FrameTimeMs == 0) return;
 
             var time = AudioEngine.Track.Time;
             int currentFrameIndex = (int)(Math.Max(0, time) / FrameTimeMs);
@@ -412,7 +420,10 @@ namespace Quaver.Shared.Screens.Gameplay
                 CurrentRingIndex = (CurrentRingIndex + 1) % 3;
                 LastUploadedIndex = currentFrameIndex;
             }
-            catch { }
+            catch 
+            {
+                // If upload fails, just return buffer and continue (don't crash)
+            }
             finally
             {
                 System.Buffers.ArrayPool<byte>.Shared.Return(frameToUpload.PixelData);
@@ -428,7 +439,7 @@ namespace Quaver.Shared.Screens.Gameplay
             Screen.Ruleset?.Update(gameTime);
             Container?.Update(gameTime);
 
-            if (ConfigManager.VideoModEnabled.Value)
+            if (ConfigManager.VideoModEnabled.Value && !IsVideoCrashed)
             {
                 double targetInterval = 1000.0 / ConfigManager.VideoModUpdateRate.Value;
                 VideoUpdateAccumulator += gameTime.ElapsedGameTime.TotalMilliseconds;
@@ -453,40 +464,49 @@ namespace Quaver.Shared.Screens.Gameplay
         {
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
 
-            if (ConfigManager.VideoModEnabled.Value && DrawRingIndex != -1 && RingTextures != null && RingTextures[DrawRingIndex] != null)
+            bool drawnVideo = false;
+
+            // BULLETPROOF DRAW LOGIC
+            if (ConfigManager.VideoModEnabled.Value && !IsVideoCrashed && DrawRingIndex != -1 && RingTextures != null && RingTextures[DrawRingIndex] != null)
             {
-                if (Background != null) Background.Alpha = 0;
-
-                var currentTexture = RingTextures[DrawRingIndex];
-
-                VideoBatch.Begin();
-                int w = GameBase.Game.GraphicsDevice.Viewport.Width;
-                int h = GameBase.Game.GraphicsDevice.Viewport.Height;
-                VideoBatch.Draw(currentTexture, new Rectangle(0, 0, w, h), Color.White);
-
-                // --- RICH DEBUG OVERLAY ---
-                if (ConfigManager.VideoModDebug.Value && DebugFont != null && DebugBoxTexture != null)
+                try
                 {
-                    int bufferedFrames = VideoBuffer.Count;
-                    int freeFrames = FreeBufferPool.Count;
-                    long ramUsage = (bufferedFrames + freeFrames) * (long)(VideoWidth * VideoHeight * (ConfigManager.VideoModUse32Bit.Value ? 4 : 2)) / (1024*1024);
-                    string mode = ConfigManager.VideoModUse32Bit.Value ? "32-bit (High)" : "16-bit (Fast)";
-                    
-                    string stats = $"VIDEO STATS\n" +
-                                   $"Mode: {mode}\n" +
-                                   $"Res: {VideoWidth}x{VideoHeight}\n" +
-                                   $"Buffer: {bufferedFrames} Ready / {freeFrames} Free\n" +
-                                   $"Video RAM: ~{ramUsage} MB";
+                    if (Background != null) Background.Alpha = 0;
 
-                    // FIX: Use manual texture
-                    VideoBatch.Draw(DebugBoxTexture, new Rectangle(10, 100, 280, 120), new Color(0, 0, 0, 150));
-                    VideoBatch.DrawString(DebugFont, stats, new Vector2(20, 110), Color.LimeGreen);
+                    var currentTexture = RingTextures[DrawRingIndex];
+
+                    VideoBatch.Begin();
+                    int w = GameBase.Game.GraphicsDevice.Viewport.Width;
+                    int h = GameBase.Game.GraphicsDevice.Viewport.Height;
+                    VideoBatch.Draw(currentTexture, new Rectangle(0, 0, w, h), Color.White);
+
+                    // --- DEBUG OVERLAY ---
+                    if (ConfigManager.VideoModDebug.Value && DebugFont != null && DebugBoxTexture != null)
+                    {
+                        int bufferedFrames = VideoBuffer.Count;
+                        int freeFrames = FreeBufferPool.Count;
+                        long ramUsage = (bufferedFrames + freeFrames) * (long)(VideoWidth * VideoHeight * (ConfigManager.VideoModUse32Bit.Value ? 4 : 2)) / (1024*1024);
+                        string mode = ConfigManager.VideoModUse32Bit.Value ? "32-bit" : "16-bit";
+                        string stats = $"VIDEO STATS\nMode: {mode}\nRes: {VideoWidth}x{VideoHeight}\nBuf: {bufferedFrames}/{freeFrames}\nRAM: ~{ramUsage} MB";
+
+                        VideoBatch.Draw(DebugBoxTexture, new Rectangle(10, 100, 250, 100), new Color(0, 0, 0, 150));
+                        VideoBatch.DrawString(DebugFont, stats, new Vector2(20, 110), Color.LimeGreen);
+                    }
+
+                    VideoBatch.End();
+                    drawnVideo = true;
                 }
-
-                VideoBatch.End();
+                catch
+                {
+                    // If video draw fails, fallback to static background
+                    drawnVideo = false;
+                    IsVideoCrashed = true; 
+                }
             }
-            else
+            
+            if (!drawnVideo)
             {
+                if (Background != null) Background.Alpha = 1;
                 Background.Draw(gameTime);
             }
 
@@ -511,10 +531,10 @@ namespace Quaver.Shared.Screens.Gameplay
             if (RingTextures != null)
             {
                 foreach (var tex in RingTextures)
-                    tex?.Dispose();
+                    try { tex?.Dispose(); } catch {}
             }
-            VideoBatch?.Dispose();
-            DebugBoxTexture?.Dispose(); // FIX: Cleanup box texture
+            try { VideoBatch?.Dispose(); } catch {}
+            try { DebugBoxTexture?.Dispose(); } catch {}
 
             GC.Collect();
 
@@ -525,7 +545,6 @@ namespace Quaver.Shared.Screens.Gameplay
             Container?.Destroy();
         }
 
-        // ... [Standard functions like CreateBackground, CreateProgressBar, etc. remain here] ...
         private void CreateBackground()
         {
             var background = BackgroundHelper.RawTexture;
