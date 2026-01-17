@@ -14,7 +14,6 @@ jobs:
       with:
         submodules: false
         ref: mp4-feature
-        ref: ${{ github.ref }}
 
     - name: Initialize Submodules (Skip Private)
       run: |
