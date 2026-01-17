@@ -578,6 +578,14 @@ namespace Quaver.Shared.Screens.Gameplay
                 OnlineManager.Client.OnAllPlayersLoaded -= OnAllPlayersLoaded;
                 OnlineManager.Client.OnAllPlayersSkipped -= OnAllPlayersSkipped;
             }
+            
+            // ============================================
+            //  CUSTOM: Export Replay to Text for Debugging
+            // ============================================
+            if (ReplayCapturer?.Replay != null && ReplayCapturer.Replay.Frames.Count > 0)
+            {
+                ReplayHelper.ExportReplayToText(ReplayCapturer.Replay, "last_replay_debug.txt");
+            }
 
             Metronome?.Dispose();
             IsDisposed = true;
