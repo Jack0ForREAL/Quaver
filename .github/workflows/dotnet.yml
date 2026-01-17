@@ -21,66 +21,45 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    - name: Force Inject Custom Code
+    - name: Apply MP4 Mod & Replay Patches
       shell: pwsh
       run: |
-        # 1. FIX REPLAY HELPER
-        $replayCode = Get-Content "Quaver.Shared/Helpers/ReplayHelper.cs" -Raw
-        # Ensure the export function is there (even if git reverted it)
-        if (-not $replayCode.Contains("ExportReplayToText")) {
-            $replayCode = @"
-        using System;
-        using System.IO;
-        using System.Text;
-        using Quaver.API.Maps;
-        using Quaver.API.Replays;
-        using Quaver.Shared.Config;
-        using Quaver.Shared.Modifiers;
-        using Quaver.API.Helpers;
-        using Quaver.API.Enums;
-        namespace Quaver.Shared.Helpers {
-            public static class ReplayHelper {
-                internal static Replay GeneratePerfectReplay(Qua map, string md5) {
-                    var replay = new Replay(map.Mode, "Autoplay", ModManager.Mods, md5);
-                    if (ModeHelper.IsKeyMode(map.Mode)) return Replay.GeneratePerfectReplayKeys(replay, map);
-                    throw new ArgumentOutOfRangeException();
-                }
-                public static void ExportReplayToText(Replay replay, string filename = "last_replay_debug.txt") {
-                    try {
-                        var sb = new StringBuilder();
-                        sb.AppendLine($"Player: {replay.PlayerName}");
-                        foreach (var f in replay.Frames) sb.AppendLine($"{f.Time} | {f.Keys}");
-                        var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
-                        Directory.CreateDirectory(Path.GetDirectoryName(path));
-                        File.WriteAllText(path, sb.ToString());
-                    } catch {}
-                }
-            }
+        Write-Host "Force overwriting submodule files with custom Mod Patches..."
+
+        # 1. Overwrite ReplayHelper (Fixes Logger error + Adds Export function)
+        if (Test-Path "BuildPatches/ReplayHelper.cs") {
+            Copy-Item -Path "BuildPatches/ReplayHelper.cs" -Destination "Quaver.Shared/Helpers/ReplayHelper.cs" -Force
         }
-        "@
-            Set-Content "Quaver.Shared/Helpers/ReplayHelper.cs" $replayCode
+        
+        # 2. Overwrite GameplayScreen (Adds the Destroy() hook)
+        if (Test-Path "BuildPatches/GameplayScreen.cs") {
+            Copy-Item -Path "BuildPatches/GameplayScreen.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs" -Force
         }
 
-        # 2. FIX GAMEPLAY SCREEN (Enable the call)
-        $gsPath = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
-        $gsContent = Get-Content $gsPath -Raw
-        $oldCall = "// ReplayHelper.ExportReplayToText(...)"
-        $newCall = "if (ReplayCapturer?.Replay != null) ReplayHelper.ExportReplayToText(ReplayCapturer.Replay);"
-        $gsContent = $gsContent.Replace($oldCall, $newCall)
-        Set-Content $gsPath $gsContent
+        # 3. Overwrite GameplayScreenView (Adds MP4 Video Logic)
+        if (Test-Path "BuildPatches/GameplayScreenView.cs") {
+            Copy-Item -Path "BuildPatches/GameplayScreenView.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreenView.cs" -Force
+        }
+
+        Write-Host "Patches applied successfully."
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 6.0.x
 
-    - name: Fix Dependencies
+    - name: Fix Dependencies (Reference Patching)
       shell: pwsh
       run: |
+        # Fix the Project Reference to Server.Client
         $proj = "Quaver.Shared/Quaver.Shared.csproj"
-        $content = Get-Content $proj -Raw
-        $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
-        Set-Content $proj $content
+        if (Test-Path $proj) {
+            $content = Get-Content $proj -Raw
+            $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
+            Set-Content $proj $content
+        }
+        
+        # Add TimeAgo package
         dotnet add Quaver.Shared/Quaver.Shared.csproj package TimeAgo
 
     - name: Restore dependencies
