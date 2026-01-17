@@ -1,9 +1,7 @@
 name: Build Quaver Mod
 
 on:
-  push:
-    branches: [ develop, master, main, mp4-feature ]
-  workflow_dispatch:
+  workflow_dispatch: # This ensures it ONLY builds when you tell it to.
 
 jobs:
   build:
@@ -26,17 +24,17 @@ jobs:
       run: |
         Write-Host "Force overwriting submodule files with custom Mod Patches..."
 
-        # 1. Overwrite ReplayHelper (Fixes Logger error + Adds Export function)
+        # 1. Overwrite ReplayHelper
         if (Test-Path "BuildPatches/ReplayHelper.cs") {
             Copy-Item -Path "BuildPatches/ReplayHelper.cs" -Destination "Quaver.Shared/Helpers/ReplayHelper.cs" -Force
         }
         
-        # 2. Overwrite GameplayScreen (Adds the Destroy() hook)
+        # 2. Overwrite GameplayScreen
         if (Test-Path "BuildPatches/GameplayScreen.cs") {
             Copy-Item -Path "BuildPatches/GameplayScreen.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs" -Force
         }
 
-        # 3. Overwrite GameplayScreenView (Adds MP4 Video Logic)
+        # 3. Overwrite GameplayScreenView
         if (Test-Path "BuildPatches/GameplayScreenView.cs") {
             Copy-Item -Path "BuildPatches/GameplayScreenView.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreenView.cs" -Force
         }
