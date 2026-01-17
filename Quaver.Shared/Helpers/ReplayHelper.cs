@@ -1,3 +1,4 @@
+
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -15,7 +16,6 @@ using Quaver.API.Maps;
 using Quaver.API.Replays;
 using Quaver.Shared.Config;
 using Quaver.Shared.Modifiers;
-using Wobble.Logging;
 
 namespace Quaver.Shared.Helpers
 {
@@ -63,7 +63,7 @@ namespace Quaver.Shared.Helpers
                     sb.AppendLine($"{frame.Time.ToString().PadRight(9)} | {keys}");
                 }
 
-                // Path to save
+                // Path to save - using .Value because it is a Bindable
                 var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
                 
                 // Ensure directory exists
@@ -71,12 +71,12 @@ namespace Quaver.Shared.Helpers
                 
                 File.WriteAllText(path, sb.ToString());
                 
-                // FIX: Using Logger.Important which takes (string, LogType)
-                Logger.Important($"[ReplayHelper] Saved text replay to: {path}", LogType.Runtime);
+                // Use Standard System Console to avoid Logger signature issues
+                System.Console.WriteLine($"[ReplayHelper] Saved text replay to: {path}");
             }
             catch (Exception ex)
             {
-                Logger.Error($"[ReplayHelper] Failed to export text replay: {ex.Message}", LogType.Runtime);
+                System.Console.WriteLine($"[ReplayHelper] Failed to export text replay: {ex.Message}");
             }
         }
     }
