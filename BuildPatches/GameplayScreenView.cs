@@ -84,11 +84,7 @@ namespace Quaver.Shared.Screens.Gameplay
         private ReplayController ReplayController { get; }
 
         // --- MP4 VIDEO MOD VARIABLES ---
-        private struct DecodedFrame 
-        { 
-            public int Index; 
-            public byte[] PixelData; 
-        }
+        private struct DecodedFrame { public int Index; public byte[] PixelData; }
 
         private Texture2D[] RingTextures;
         private int CurrentRingIndex = 0;
@@ -125,8 +121,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (!Screen.IsSongSelectPreview)
             {
-                try 
-                {
+                try {
                     VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
                     ConfigureVideoMod();
 
@@ -134,9 +129,7 @@ namespace Quaver.Shared.Screens.Gameplay
                     {
                         StartVideoLoader(0);
                     }
-                } 
-                catch 
-                { 
+                } catch { 
                     IsVideoCrashed = true; 
                 }
             }
@@ -246,8 +239,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
         private void ConfigureVideoMod()
         {
-            try 
-            {
+            try {
                 if (ConfigManager.VideoModAutoConfiguration.Value)
                 {
                     int ram = VideoUtils.GetTotalRamMB();
@@ -260,9 +252,7 @@ namespace Quaver.Shared.Screens.Gameplay
                     MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
                     DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
                 }
-            } 
-            catch 
-            {
+            } catch {
                 MaxRamUsageBytes = 1024 * 1024 * 1024;
                 DecoderThreadCount = 2;
             }
@@ -278,7 +268,8 @@ namespace Quaver.Shared.Screens.Gameplay
 
             VideoLoaderToken = new CancellationTokenSource();
             
-            Logger.Log(LogType.Runtime, $"[VideoMod] Starting loader at {startTimeMs}ms");
+            // FIXED LOGGING CALL
+            Logger.Log($"[VideoMod] Starting loader at {startTimeMs}ms", LogLevel.Debug, LogType.Runtime);
 
             VideoBuffer.Clear();
             
@@ -435,7 +426,8 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (targetFrame > maxBufferFrame + thresholdFrames || targetFrame < minBufferFrame - thresholdFrames)
             {
-                Logger.Log(LogType.Runtime, $"[VideoMod] Sync drift detected. Resyncing...");
+                // FIXED LOGGING CALL
+                Logger.Log($"[VideoMod] Sync drift detected. Resyncing...", LogLevel.Debug, LogType.Runtime);
                 RequiresResync = true;
             }
         }
