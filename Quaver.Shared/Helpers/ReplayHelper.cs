@@ -63,7 +63,7 @@ namespace Quaver.Shared.Helpers
                     sb.AppendLine($"{frame.Time.ToString().PadRight(9)} | {keys}");
                 }
 
-                // Path to save
+                // FIX 1: Keep using .Value because DataDirectory is a Bindable
                 var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
                 
                 // Ensure directory exists
@@ -71,8 +71,8 @@ namespace Quaver.Shared.Helpers
                 
                 File.WriteAllText(path, sb.ToString());
                 
-                // FIX: Added LogLevel.Info as the second argument
-                Logger.Log($"[ReplayHelper] Saved text replay to: {path}", LogLevel.Info, LogType.Runtime);
+                // FIX 2: Use Logger.Important instead of Logger.Log to match the class definition
+                Logger.Important($"[ReplayHelper] Saved text replay to: {path}", LogType.Runtime);
             }
             catch (Exception ex)
             {
