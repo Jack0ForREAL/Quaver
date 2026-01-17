@@ -15,6 +15,7 @@ using Quaver.API.Maps;
 using Quaver.API.Replays;
 using Quaver.Shared.Config;
 using Quaver.Shared.Modifiers;
+using Wobble.Logging;
 
 namespace Quaver.Shared.Helpers
 {
@@ -62,18 +63,20 @@ namespace Quaver.Shared.Helpers
                     sb.AppendLine($"{frame.Time.ToString().PadRight(9)} | {keys}");
                 }
 
-                // Save to the game's data directory (Usually %AppData%/Quaver or the game folder)
-                var path = Path.Combine(ConfigManager.DataDirectory, "Replays", filename);
+                // Path to save
+                var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
                 
                 // Ensure directory exists
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 
                 File.WriteAllText(path, sb.ToString());
-                Wobble.Logging.Logger.Info($"[ReplayHelper] Saved text replay to: {path}", Wobble.Logging.LogType.Runtime);
+                
+                // FIX: Added LogLevel.Info as the second argument
+                Logger.Log($"[ReplayHelper] Saved text replay to: {path}", LogLevel.Info, LogType.Runtime);
             }
             catch (Exception ex)
             {
-                Wobble.Logging.Logger.Error($"[ReplayHelper] Failed to export text replay: {ex.Message}", Wobble.Logging.LogType.Runtime);
+                Logger.Error($"[ReplayHelper] Failed to export text replay: {ex.Message}", LogType.Runtime);
             }
         }
     }
