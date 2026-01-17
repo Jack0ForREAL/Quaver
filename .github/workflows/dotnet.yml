@@ -21,11 +21,14 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    # --- THE FIX: We manually write the working code so Git can't delete it ---
-    - name: Force Fix ReplayHelper
+    - name: Force Inject Custom Code
       shell: pwsh
       run: |
-        $code = @"
+        # 1. FIX REPLAY HELPER
+        $replayCode = Get-Content "Quaver.Shared/Helpers/ReplayHelper.cs" -Raw
+        # Ensure the export function is there (even if git reverted it)
+        if (-not $replayCode.Contains("ExportReplayToText")) {
+            $replayCode = @"
         using System;
         using System.IO;
         using System.Text;
@@ -35,37 +38,36 @@ jobs:
         using Quaver.Shared.Modifiers;
         using Quaver.API.Helpers;
         using Quaver.API.Enums;
-
-        namespace Quaver.Shared.Helpers
-        {
-            public static class ReplayHelper
-            {
-                internal static Replay GeneratePerfectReplay(Qua map, string md5)
-                {
+        namespace Quaver.Shared.Helpers {
+            public static class ReplayHelper {
+                internal static Replay GeneratePerfectReplay(Qua map, string md5) {
                     var replay = new Replay(map.Mode, "Autoplay", ModManager.Mods, md5);
-                    if (ModeHelper.IsKeyMode(map.Mode))
-                        return Replay.GeneratePerfectReplayKeys(replay, map);
+                    if (ModeHelper.IsKeyMode(map.Mode)) return Replay.GeneratePerfectReplayKeys(replay, map);
                     throw new ArgumentOutOfRangeException();
                 }
-
-                public static void ExportReplayToText(Replay replay, string filename = "last_replay_debug.txt")
-                {
-                    try
-                    {
+                public static void ExportReplayToText(Replay replay, string filename = "last_replay_debug.txt") {
+                    try {
                         var sb = new StringBuilder();
-                        sb.AppendLine($"Map: {replay.MapMd5}");
+                        sb.AppendLine($"Player: {replay.PlayerName}");
                         foreach (var f in replay.Frames) sb.AppendLine($"{f.Time} | {f.Keys}");
-                        
                         var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
                         Directory.CreateDirectory(Path.GetDirectoryName(path));
                         File.WriteAllText(path, sb.ToString());
-                    }
-                    catch {}
+                    } catch {}
                 }
             }
         }
         "@
-        Set-Content "Quaver.Shared/Helpers/ReplayHelper.cs" $code
+            Set-Content "Quaver.Shared/Helpers/ReplayHelper.cs" $replayCode
+        }
+
+        # 2. FIX GAMEPLAY SCREEN (Enable the call)
+        $gsPath = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
+        $gsContent = Get-Content $gsPath -Raw
+        $oldCall = "// ReplayHelper.ExportReplayToText(...)"
+        $newCall = "if (ReplayCapturer?.Replay != null) ReplayHelper.ExportReplayToText(ReplayCapturer.Replay);"
+        $gsContent = $gsContent.Replace($oldCall, $newCall)
+        Set-Content $gsPath $gsContent
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
