@@ -2,7 +2,7 @@ name: Build Quaver Mod
 
 on:
   push:
-    branches: [ develop, master, main ]
+    branches: [ develop, master, main, mp4-feature ]
   workflow_dispatch:
 
 jobs:
@@ -13,6 +13,7 @@ jobs:
     - uses: actions/checkout@v3
       with:
         submodules: false
+        ref: ${{ github.ref }}
 
     - name: Initialize Submodules (Skip Private)
       run: |
@@ -28,20 +29,10 @@ jobs:
     - name: Fix Dependencies (PowerShell)
       shell: pwsh
       run: |
-        # 1. Define the path to the shared project file
         $proj = "Quaver.Shared/Quaver.Shared.csproj"
-        
-        # 2. Read the file content
         $content = Get-Content $proj -Raw
-        
-        # 3. SWAP THE LINK: Replace the missing Project Reference with the existing DLL Reference
-        # This Regex looks for the line including the Server.Client.csproj and replaces it
         $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
-        
-        # 4. Save the fixed file
         Set-Content $proj $content
-        
-        # 5. Force install the missing TimeAgo library just in case
         dotnet add Quaver.Shared/Quaver.Shared.csproj package TimeAgo
 
     - name: Restore dependencies
