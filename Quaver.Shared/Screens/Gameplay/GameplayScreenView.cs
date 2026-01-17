@@ -164,7 +164,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (ConfigManager.DisplayJudgementCounter.Value)
             {
-                if (OnlineManager.CurrentGame == null || OnlineManager.CurrentGame.Ruleset != MultiplayerGameRuleset.Team)
+                if (OnlineManager.CurrentGame == null || OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team)
                     JudgementCounter = new JudgementCounter(Screen) { Parent = Container };
             }
 
@@ -400,38 +400,78 @@ namespace Quaver.Shared.Screens.Gameplay
             if (IsVideoCrashed || AudioEngine.Track == null || VideoWidth == 0 || FrameTimeMs == 0) return;
 
             var time = AudioEngine.Track.Time;
+            
+            // Calculate which frame we SHOULD be seeing right now
             int currentFrameIndex = (int)(Math.Max(0, time) / FrameTimeMs);
 
-            if (currentFrameIndex == LastUploadedIndex || !VideoBuffer.TryRemove(currentFrameIndex, out var frameToUpload))
-                return;
+            // OPTIMIZATION:
+            // Instead of looking for EXACT match (which might fail if 1ms late),
+            // we look for the latest available frame that is <= currentFrameIndex.
+            // This prevents "frozen" video if the decoder is slightly lagging or if frames dropped.
+            
+            // 1. Find the best frame in the buffer
+            int bestIndex = -1;
+            DecodedFrame bestFrame = default;
+            bool foundFrame = false;
 
-            try
+            // Simple search - since ConcurrentDictionary keys aren't sorted, we iterate.
+            // But since we prune old frames, the list shouldn't be huge.
+            foreach (var kvp in VideoBuffer)
             {
-                bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
-                int bytesPerPixel = use32Bit ? 4 : 2;
-                SurfaceFormat format = use32Bit ? SurfaceFormat.Color : SurfaceFormat.Bgr565;
-
-                if (RingTextures == null)
+                int idx = kvp.Key;
+                // If the frame is in the future, ignore it.
+                // If the frame is in the past or present, it's a candidate.
+                if (idx <= currentFrameIndex)
                 {
-                    RingTextures = new Texture2D[3];
-                    for (int i = 0; i < 3; i++)
-                        RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, format);
+                    if (idx > bestIndex)
+                    {
+                        bestIndex = idx;
+                        bestFrame = kvp.Value;
+                        foundFrame = true;
+                    }
                 }
+            }
 
-                RingTextures[CurrentRingIndex].SetData(frameToUpload.PixelData, 0, VideoWidth * VideoHeight * bytesPerPixel);
-                DrawRingIndex = CurrentRingIndex;
-                CurrentRingIndex = (CurrentRingIndex + 1) % 3;
-                LastUploadedIndex = currentFrameIndex;
-            }
-            catch 
+            // 2. Decide to upload
+            if (foundFrame && bestIndex > LastUploadedIndex)
             {
-                // If upload fails, just return buffer and continue
+                try
+                {
+                    bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
+                    int bytesPerPixel = use32Bit ? 4 : 2;
+                    SurfaceFormat format = use32Bit ? SurfaceFormat.Color : SurfaceFormat.Bgr565;
+
+                    if (RingTextures == null)
+                    {
+                        RingTextures = new Texture2D[3];
+                        for (int i = 0; i < 3; i++)
+                            RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, format);
+                    }
+
+                    RingTextures[CurrentRingIndex].SetData(bestFrame.PixelData, 0, VideoWidth * VideoHeight * bytesPerPixel);
+                    DrawRingIndex = CurrentRingIndex;
+                    CurrentRingIndex = (CurrentRingIndex + 1) % 3;
+                    LastUploadedIndex = bestIndex;
+                }
+                catch 
+                {
+                    // Upload failed (device lost?)
+                }
             }
-            finally
+
+            // 3. CRITICAL: Clean up old frames (Garbage Collection)
+            // Any frame older than or equal to what we just processed is effectively "seen" or "skipped".
+            // We return them to the pool to prevent memory leaks.
+            foreach (var key in VideoBuffer.Keys)
             {
-                // FIX: Return to FREE POOL, not System Pool
-                if (IsPoolInitialized)
-                    FreeBufferPool.Push(frameToUpload.PixelData);
+                if (key <= currentFrameIndex)
+                {
+                    if (VideoBuffer.TryRemove(key, out var oldFrame))
+                    {
+                        if (IsPoolInitialized)
+                            FreeBufferPool.Push(oldFrame.PixelData);
+                    }
+                }
             }
         }
 
