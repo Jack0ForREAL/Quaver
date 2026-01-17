@@ -84,21 +84,27 @@ namespace Quaver.Shared.Screens.Gameplay
 
         // --- MP4 VIDEO MOD VARIABLES ---
         private struct DecodedFrame { public int Index; public byte[] PixelData; }
+
         private Texture2D[] RingTextures;
         private int CurrentRingIndex = 0;
         private int DrawRingIndex = -1;
+
         private long MaxRamUsageBytes;
         private int DecoderThreadCount;
         private ConcurrentDictionary<int, DecodedFrame> VideoBuffer = new ConcurrentDictionary<int, DecodedFrame>();
-        private CancellationTokenSource VideoLoaderToken = new CancellationTokenSource();
+        private CancellationTokenSource VideoLoaderToken;
         private Process FfmpegProcess;
         private SpriteBatch VideoBatch;
-        private SpriteFont DebugFont; 
-        private Texture2D DebugBoxTexture; 
         private int VideoWidth, VideoHeight;
         private double FrameTimeMs;
         private int LastUploadedIndex = -1;
-        private double VideoUpdateAccumulator = 0;
+        
+        // SYNC VARIABLES
+        private double LastSyncCheckTime = 0;
+        private double InternalVideoClockStart = 0;
+        private bool RequiresResync = false;
+        private object ProcessLock = new object();
+
         private ConcurrentStack<byte[]> FreeBufferPool = new ConcurrentStack<byte[]>();
         private bool IsPoolInitialized = false;
         private bool IsVideoCrashed = false;
@@ -116,13 +122,12 @@ namespace Quaver.Shared.Screens.Gameplay
             {
                 try {
                     VideoBatch = new SpriteBatch(GameBase.Game.GraphicsDevice);
-                    DebugBoxTexture = new Texture2D(GameBase.Game.GraphicsDevice, 1, 1);
-                    DebugBoxTexture.SetData(new[] { Color.White });
-                    try { DebugFont = GameBase.Game.Content.Load<SpriteFont>("Fonts/WidthFixed"); } catch {}
-                    
                     ConfigureVideoMod();
+
                     if (ConfigManager.VideoModEnabled.Value)
-                        RunVideoLoaderMp4(VideoLoaderToken.Token);
+                    {
+                        StartVideoLoader(0);
+                    }
                 } catch { 
                     IsVideoCrashed = true; 
                 }
@@ -130,11 +135,17 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Battle_Royale
                 && ConfigManager.EnableBattleRoyaleBackgroundFlashing.Value)
+            {
                 BattleRoyaleBackgroundAlerter = new BattleRoyaleBackgroundAlerter(this);
+            }
 
-            if (!Screen.IsPlayTesting && !Screen.IsCalibratingOffset) CreateScoreboards();
+            if (!Screen.IsPlayTesting && !Screen.IsCalibratingOffset)
+                CreateScoreboards();
+
             CreateProgressBar();
-            if (SkinManager.Skin.Keys[Screen.Map.Mode].ShowMiniSongBar) CreateMiniProgressBar();
+
+            if (SkinManager.Skin.Keys[Screen.Map.Mode].ShowMiniSongBar)
+                CreateMiniProgressBar();
 
             CreateScoreDisplay();
             CreateRatingDisplay();
@@ -151,142 +162,345 @@ namespace Quaver.Shared.Screens.Gameplay
 
             CreateKeysPerSecondDisplay();
             CreateGradeDisplay();
+
             SkipDisplay = new SkipDisplay(Screen, SkinManager.Skin.Skip) { Parent = Container };
 
-            if (Screen.IsMultiplayerGame) MultiplayerEndTime = new MultiplayerEndGameWaitTime { Parent = Container, Alignment = Alignment.MidCenter };
-            if (Screen.SpectatorClient != null) SpectatorDialog = new SpectatorDialog(Screen.SpectatorClient) { Parent = Container, Alignment = Alignment.MidCenter, Alpha = 0 };
+            if (Screen.IsMultiplayerGame)
+            {
+                MultiplayerEndTime = new MultiplayerEndGameWaitTime
+                {
+                    Parent = Container,
+                    Alignment = Alignment.MidCenter
+                };
+            }
 
-            SpectatorCount = new SpectatorCount { Parent = Container, Y = 120, Alignment = Alignment.TopRight, X = -10 };
+            if (Screen.SpectatorClient != null)
+            {
+                SpectatorDialog = new SpectatorDialog(Screen.SpectatorClient)
+                {
+                    Parent = Container,
+                    Alignment = Alignment.MidCenter,
+                    Alpha = 0
+                };
+            }
 
-            if (Screen.InReplayMode && Screen.SpectatorClient == null && !Screen.IsSongSelectPreview)
-                ReplayController = new ReplayController(Screen) { Parent = Container, Alignment = Alignment.BotRight, Position = new ScalableVector2(-12, -110) };
-
-            Transitioner = new Sprite() {
-                Parent = Container, Size = new ScalableVector2(WindowManager.Width, WindowManager.Height),
-                Tint = Color.Black, Alpha = 1, Animations = { new Animation(AnimationProperty.Alpha, Easing.Linear, 1, 0, 1500) }
+            SpectatorCount = new SpectatorCount
+            {
+                Parent = Container,
+                Y = 120,
+                Alignment = Alignment.TopRight,
+                X = -10
             };
 
-            if (Screen.SpectatorClient == null) PauseScreen = new PauseScreen(Screen) { Parent = Container };
-            if (!Screen.IsSongSelectPreview && MapManager.Selected.Value.LocalOffset != 0)
-                NotificationManager.Show(NotificationLevel.Info, $"The local audio offset for this map is: {MapManager.Selected.Value.LocalOffset} ms", null, true);
+            if (Screen.InReplayMode && Screen.SpectatorClient == null && !Screen.IsSongSelectPreview)
+            {
+                ReplayController = new ReplayController(Screen)
+                {
+                    Parent = Container,
+                    Alignment = Alignment.BotRight,
+                    Position = new ScalableVector2(-12, -110)
+                };
+            }
 
-            if (Screen.IsCalibratingOffset) Tip = new OffsetCalibratorTip { Parent = Container, Alignment = Alignment.MidCenter };
-            if (OnlineManager.Client != null && !Screen.IsSongSelectPreview) OnlineManager.Client.OnGameEnded += OnGameEnded;
+            Transitioner = new Sprite()
+            {
+                Parent = Container,
+                Size = new ScalableVector2(WindowManager.Width, WindowManager.Height),
+                Tint = Color.Black,
+                Alpha = 1,
+                Animations =
+                {
+                    new Animation(AnimationProperty.Alpha, Easing.Linear, 1, 0, 1500)
+                }
+            };
+
+            if (Screen.SpectatorClient == null)
+                PauseScreen = new PauseScreen(Screen) { Parent = Container };
+
+            if (!Screen.IsSongSelectPreview && MapManager.Selected.Value.LocalOffset != 0)
+            {
+                NotificationManager.Show(NotificationLevel.Info, $"The local audio offset for this map is: {MapManager.Selected.Value.LocalOffset} ms",
+                    null, true);
+            }
+
+            if (Screen.IsCalibratingOffset)
+            {
+                Tip = new OffsetCalibratorTip
+                {
+                    Parent = Container,
+                    Alignment = Alignment.MidCenter
+                };
+            }
+
+            if (OnlineManager.Client != null && !Screen.IsSongSelectPreview)
+                OnlineManager.Client.OnGameEnded += OnGameEnded;
         }
 
         private void ConfigureVideoMod()
         {
-            if (ConfigManager.VideoModAutoConfiguration.Value)
-            {
-                int ram = VideoUtils.GetTotalRamMB();
-                MaxRamUsageBytes = (long)(Math.Min(ram / 2, 4096)) * 1024 * 1024;
-                DecoderThreadCount = Math.Clamp(VideoUtils.GetCpuThreads() / 2, 1, 4);
-            }
-            else
-            {
-                MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
-                DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
+            try {
+                if (ConfigManager.VideoModAutoConfiguration.Value)
+                {
+                    int ram = VideoUtils.GetTotalRamMB();
+                    int threads = VideoUtils.GetCpuThreads();
+                    MaxRamUsageBytes = (long)(Math.Min(ram / 2, 4096)) * 1024 * 1024;
+                    DecoderThreadCount = Math.Clamp(threads / 2, 1, 4);
+                }
+                else
+                {
+                    MaxRamUsageBytes = (long)ConfigManager.VideoModRamBudget.Value * 1024 * 1024;
+                    DecoderThreadCount = ConfigManager.VideoModDecoderThreads.Value;
+                }
+            } catch {
+                MaxRamUsageBytes = 1024 * 1024 * 1024;
+                DecoderThreadCount = 2;
             }
         }
 
-        private async void RunVideoLoaderMp4(CancellationToken token)
+        // --- NEW SYNC LOGIC ---
+        private void StartVideoLoader(double startTimeMs)
+        {
+            if (VideoLoaderToken != null)
+            {
+                VideoLoaderToken.Cancel();
+                VideoLoaderToken.Dispose();
+            }
+
+            VideoLoaderToken = new CancellationTokenSource();
+            
+            // Clear existing buffer to prevent ghost frames
+            VideoBuffer.Clear();
+            
+            Task.Run(() => RunVideoLoaderMp4(VideoLoaderToken.Token, startTimeMs));
+        }
+
+        private async void RunVideoLoaderMp4(CancellationToken token, double startTimeMs)
         {
             if (Screen.IsSongSelectPreview) return;
             try 
             {
                 if (!await VideoUtils.CheckOrDownloadFFmpeg()) return;
+
                 var currentMap = MapManager.Selected.Value;
                 if (currentMap == null) return;
 
                 var fileName = ConfigManager.VideoModHighQuality.Value ? "video.mp4" : "video_low.mp4";
                 var videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName);
-                if (!File.Exists(videoPath)) videoPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, fileName == "video.mp4" ? "video_low.mp4" : "video.mp4");
-                if (!File.Exists(videoPath)) return;
+
+                if (!File.Exists(videoPath))
+                {
+                    var otherName = fileName == "video.mp4" ? "video_low.mp4" : "video.mp4";
+                    var otherPath = Path.Combine(ConfigManager.SongDirectory.Value, currentMap.Directory, otherName);
+                    if (File.Exists(otherPath)) videoPath = otherPath;
+                    else return;
+                }
 
                 var (width, height, frameTime) = VideoUtils.GetVideoInfo(videoPath);
                 if (width == 0) return;
 
-                // Resolution Logic
-                int targetH = ConfigManager.VideoModTargetHeight.Value <= 0 ? height : Math.Min(ConfigManager.VideoModTargetHeight.Value, height);
-                int targetW = (int)(targetH * ((float)width / height));
-                VideoWidth = targetW + (targetW % 2); VideoHeight = targetH + (targetH % 2); FrameTimeMs = frameTime;
+                // RESOLUTION
+                int targetH = ConfigManager.VideoModTargetHeight.Value;
+                if (targetH <= 0) targetH = height;
+                targetH = Math.Min(targetH, height);
+                float aspect = (float)width / height;
+                int targetW = (int)(targetH * aspect);
+                if (targetW % 2 != 0) targetW++;
+                if (targetH % 2 != 0) targetH++;
 
+                VideoWidth = targetW;
+                VideoHeight = targetH;
+                FrameTimeMs = frameTime;
+
+                // Set internal clock reference
+                InternalVideoClockStart = startTimeMs;
+                int startFrameIndex = (int)(startTimeMs / FrameTimeMs);
+
+                // CONFIGURATION
                 bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
+                int bytesPerPixel = use32Bit ? 4 : 2;
                 string pixelFormat = use32Bit ? "rgba" : "rgb565le";
-                int frameSize = VideoWidth * VideoHeight * (use32Bit ? 4 : 2);
                 
-                // SYNC START: Seek FFmpeg if map already started
-                double startTimeSec = Math.Max(0, AudioEngine.Track.Time / 1000.0);
-                string seekArg = startTimeSec > 0.1 ? $"-ss {startTimeSec:0.000} " : "";
+                int frameSize = VideoWidth * VideoHeight * bytesPerPixel;
+                int bufferCount = (int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs));
+                int cap = use32Bit ? 200 : 400;
+                bufferCount = Math.Clamp(bufferCount, 10, cap);
 
-                // Initialize Pool
-                int bufferCount = Math.Clamp((int)(ConfigManager.VideoModPreloadSeconds.Value * (1000.0 / FrameTimeMs)), 10, use32Bit ? 200 : 400);
-                for (int i = 0; i < bufferCount; i++) FreeBufferPool.Push(new byte[frameSize]);
-                IsPoolInitialized = true;
+                if (!IsPoolInitialized)
+                {
+                    for (int i = 0; i < bufferCount; i++)
+                        FreeBufferPool.Push(new byte[frameSize]);
+                    IsPoolInitialized = true;
+                }
 
-                FfmpegProcess = Process.Start(new ProcessStartInfo {
+                // SEEK COMMAND (-ss) ADDED HERE
+                string seekCmd = startTimeMs > 0 ? $"-ss {startTimeMs / 1000.0:0.000}" : "";
+
+                var startInfo = new ProcessStartInfo
+                {
                     FileName = VideoUtils.FFmpegPath,
-                    Arguments = $"{seekArg}-threads {DecoderThreadCount} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -f rawvideo -pix_fmt {pixelFormat} -v quiet -",
-                    UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true
-                });
+                    // Added -vsync 0 to prevent FFmpeg dropping frames internally differently than we expect
+                    Arguments = $"-threads {DecoderThreadCount} {seekCmd} -i \"{videoPath}\" -vf scale={VideoWidth}:{VideoHeight} -vsync 0 -f rawvideo -pix_fmt {pixelFormat} -v quiet -",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    CreateNoWindow = true
+                };
+
+                lock (ProcessLock)
+                {
+                    FfmpegProcess = Process.Start(startInfo);
+                }
 
                 var stream = FfmpegProcess.StandardOutput.BaseStream;
-                int frameIndex = (int)(startTimeSec * 1000 / FrameTimeMs);
+                int frameOffset = 0;
 
                 while (!token.IsCancellationRequested && !FfmpegProcess.HasExited)
                 {
-                    if (FreeBufferPool.IsEmpty) { Thread.Sleep(5); continue; }
-                    if (!FreeBufferPool.TryPop(out byte[] data)) continue;
-
-                    int totalRead = 0;
-                    while (totalRead < frameSize) {
-                        int read = await stream.ReadAsync(data, totalRead, frameSize - totalRead, token);
-                        if (read == 0) break;
-                        totalRead += read;
+                    if (FreeBufferPool.IsEmpty)
+                    {
+                        Thread.Sleep(2); 
+                        continue;
                     }
 
-                    if (totalRead < frameSize) { FreeBufferPool.Push(data); break; }
-                    if (!VideoBuffer.TryAdd(frameIndex++, new DecodedFrame { Index = frameIndex, PixelData = data })) FreeBufferPool.Push(data);
+                    if (!FreeBufferPool.TryPop(out byte[] data)) continue;
+
+                    try
+                    {
+                        int totalRead = 0;
+                        while (totalRead < frameSize)
+                        {
+                            int read = await stream.ReadAsync(data, totalRead, frameSize - totalRead, token);
+                            if (read == 0) break;
+                            totalRead += read;
+                        }
+
+                        if (totalRead < frameSize)
+                        {
+                            FreeBufferPool.Push(data);
+                            break;
+                        }
+
+                        // Calculate ACTUAL index based on start time + processed frames
+                        var frame = new DecodedFrame { Index = startFrameIndex + frameOffset, PixelData = data };
+                        frameOffset++;
+
+                        if (!VideoBuffer.TryAdd(frame.Index, frame))
+                        {
+                            FreeBufferPool.Push(data);
+                        }
+                    }
+                    catch
+                    {
+                        FreeBufferPool.Push(data);
+                        break;
+                    }
                 }
             }
-            catch (Exception e) { IsVideoCrashed = true; LogVideoError("Loader Error: " + e.Message); }
-            finally { if (FfmpegProcess != null && !FfmpegProcess.HasExited) try { FfmpegProcess.Kill(); } catch { } }
+            catch (Exception e) 
+            { 
+                IsVideoCrashed = true; 
+            }
+            finally
+            {
+                lock (ProcessLock)
+                {
+                    if (FfmpegProcess != null && !FfmpegProcess.HasExited)
+                    {
+                        try { FfmpegProcess.Kill(); } catch { }
+                    }
+                }
+            }
         }
 
-        private void LogVideoError(string msg) { try { File.AppendAllText(Path.Combine(ConfigManager.LogsDirectory.Value, "video_mod.log"), $"[{DateTime.Now}] {msg}{Environment.NewLine}"); } catch { } }
+        private void CheckSyncStatus(double currentTime)
+        {
+            // Only check every 250ms
+            if (Math.Abs(currentTime - LastSyncCheckTime) < 250) return;
+            LastSyncCheckTime = currentTime;
+
+            if (VideoBuffer.IsEmpty || FrameTimeMs == 0) return;
+
+            int targetFrame = (int)(currentTime / FrameTimeMs);
+            
+            // Get the highest index currently in buffer
+            int maxBufferFrame = VideoBuffer.Keys.Max();
+            int minBufferFrame = VideoBuffer.Keys.Min();
+
+            // DESYNC CONDITION:
+            // 1. We are requesting a frame way ahead of what we have (Buffer Underrun / Lag)
+            // 2. We are requesting a frame way behind what we have (Seek / Skip backwards)
+            // Threshold: 1000ms (1 second)
+            
+            int thresholdFrames = (int)(1000.0 / FrameTimeMs);
+
+            if (targetFrame > maxBufferFrame + thresholdFrames || targetFrame < minBufferFrame - thresholdFrames)
+            {
+                RequiresResync = true;
+            }
+        }
 
         private void UpdateAndUploadVideoTexture()
         {
-            if (IsVideoCrashed || AudioEngine.Track == null || FrameTimeMs == 0) return;
+            if (IsVideoCrashed || AudioEngine.Track == null || VideoWidth == 0 || FrameTimeMs == 0) return;
 
-            int targetFrame = (int)(AudioEngine.Track.Time / FrameTimeMs);
-            if (targetFrame == LastUploadedIndex) return;
+            var time = AudioEngine.Track.Time;
 
-            // Find best frame (Exact or closest behind)
-            int bestIdx = -1;
-            foreach (var key in VideoBuffer.Keys)
-                if (key <= targetFrame && key > bestIdx) bestIdx = key;
+            // Check for massive desync
+            CheckSyncStatus(time);
 
-            if (bestIdx != -1 && bestIdx > LastUploadedIndex)
+            if (RequiresResync)
             {
-                if (VideoBuffer.TryRemove(bestIdx, out var frame))
+                RequiresResync = false;
+                StartVideoLoader(time);
+                return;
+            }
+
+            int currentFrameIndex = (int)(Math.Max(0, time) / FrameTimeMs);
+
+            // Try to find the exact frame, or the closest one within 2 frames
+            DecodedFrame frameToUpload;
+            bool found = VideoBuffer.TryRemove(currentFrameIndex, out frameToUpload);
+            
+            if (!found) found = VideoBuffer.TryRemove(currentFrameIndex - 1, out frameToUpload);
+            if (!found) found = VideoBuffer.TryRemove(currentFrameIndex + 1, out frameToUpload);
+
+            // Cleanup old frames to save RAM
+            foreach (var key in VideoBuffer.Keys)
+            {
+                if (key < currentFrameIndex - 10)
                 {
-                    if (RingTextures == null) {
-                        RingTextures = new Texture2D[3];
-                        SurfaceFormat fmt = ConfigManager.VideoModUse32Bit.Value ? SurfaceFormat.Color : SurfaceFormat.Bgr565;
-                        for (int i = 0; i < 3; i++) RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, fmt);
-                    }
-                    RingTextures[CurrentRingIndex].SetData(frame.PixelData);
-                    DrawRingIndex = CurrentRingIndex;
-                    CurrentRingIndex = (CurrentRingIndex + 1) % 3;
-                    LastUploadedIndex = bestIdx;
-                    FreeBufferPool.Push(frame.PixelData);
+                    if (VideoBuffer.TryRemove(key, out var oldFrame))
+                        FreeBufferPool.Push(oldFrame.PixelData);
                 }
             }
 
-            // Garbage Collection: Kill old frames
-            foreach (var key in VideoBuffer.Keys.ToList())
-                if (key < targetFrame) if (VideoBuffer.TryRemove(key, out var old)) FreeBufferPool.Push(old.PixelData);
+            if (!found) return;
+
+            try
+            {
+                bool use32Bit = ConfigManager.VideoModUse32Bit.Value;
+                int bytesPerPixel = use32Bit ? 4 : 2;
+                SurfaceFormat format = use32Bit ? SurfaceFormat.Color : SurfaceFormat.Bgr565;
+
+                if (RingTextures == null)
+                {
+                    RingTextures = new Texture2D[3];
+                    for (int i = 0; i < 3; i++)
+                        RingTextures[i] = new Texture2D(GameBase.Game.GraphicsDevice, VideoWidth, VideoHeight, false, format);
+                }
+
+                RingTextures[CurrentRingIndex].SetData(frameToUpload.PixelData, 0, VideoWidth * VideoHeight * bytesPerPixel);
+                DrawRingIndex = CurrentRingIndex;
+                CurrentRingIndex = (CurrentRingIndex + 1) % 3;
+                LastUploadedIndex = currentFrameIndex;
+            }
+            catch 
+            {
+            }
+            finally
+            {
+                if (IsPoolInitialized)
+                    FreeBufferPool.Push(frameToUpload.PixelData);
+            }
         }
 
         public override void Update(GameTime gameTime)
@@ -300,42 +514,52 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (ConfigManager.VideoModEnabled.Value && !IsVideoCrashed)
             {
-                double targetInterval = 1000.0 / ConfigManager.VideoModUpdateRate.Value;
-                VideoUpdateAccumulator += gameTime.ElapsedGameTime.TotalMilliseconds;
-                if (VideoUpdateAccumulator >= targetInterval) {
-                    UpdateAndUploadVideoTexture();
-                    VideoUpdateAccumulator %= targetInterval; 
-                }
+                UpdateAndUploadVideoTexture();
             }
 
             UpdateGradeDisplay();
-            if (SpectatorDialog != null) SpectatorDialog.Alpha = MathHelper.Lerp(SpectatorDialog.Alpha, Screen.IsPaused ? 1 : 0, (float)Math.Min(gameTime.ElapsedGameTime.TotalMilliseconds / 100, 1));
+
+            if (SpectatorDialog != null)
+            {
+                SpectatorDialog.Alpha = MathHelper.Lerp(SpectatorDialog.Alpha, Screen.IsPaused ? 1 : 0,
+                    (float)Math.Min(gameTime.ElapsedGameTime.TotalMilliseconds / 100, 1));
+            }
         }
 
         public override void Draw(GameTime gameTime)
         {
             GameBase.Game.GraphicsDevice.Clear(Color.Black);
+
             bool drawnVideo = false;
 
-            if (ConfigManager.VideoModEnabled.Value && !IsVideoCrashed && DrawRingIndex != -1 && RingTextures?[DrawRingIndex] != null)
+            if (ConfigManager.VideoModEnabled.Value && !IsVideoCrashed && DrawRingIndex != -1 && RingTextures != null && RingTextures[DrawRingIndex] != null)
             {
-                try {
+                try
+                {
                     if (Background != null) Background.Alpha = 0;
+
+                    var currentTexture = RingTextures[DrawRingIndex];
+
                     VideoBatch.Begin();
-                    VideoBatch.Draw(RingTextures[DrawRingIndex], new Rectangle(0, 0, GameBase.Game.GraphicsDevice.Viewport.Width, GameBase.Game.GraphicsDevice.Viewport.Height), Color.White);
-                    
-                    if (ConfigManager.VideoModDebug.Value && DebugFont != null)
-                    {
-                        string stats = $"VIDEO STATS\nBuf: {VideoBuffer.Count}/{FreeBufferPool.Count}\nFrame: {LastUploadedIndex}";
-                        VideoBatch.Draw(DebugBoxTexture, new Rectangle(10, 100, 200, 60), new Color(0, 0, 0, 150));
-                        VideoBatch.DrawString(DebugFont, stats, new Vector2(20, 105), Color.LimeGreen);
-                    }
+                    int w = GameBase.Game.GraphicsDevice.Viewport.Width;
+                    int h = GameBase.Game.GraphicsDevice.Viewport.Height;
+                    VideoBatch.Draw(currentTexture, new Rectangle(0, 0, w, h), Color.White);
                     VideoBatch.End();
                     drawnVideo = true;
-                } catch { IsVideoCrashed = true; }
+                }
+                catch
+                {
+                    drawnVideo = false;
+                    IsVideoCrashed = true; 
+                }
             }
             
-            if (!drawnVideo) { if (Background != null) Background.Alpha = 1; Background.Draw(gameTime); }
+            if (!drawnVideo)
+            {
+                if (Background != null) Background.Alpha = 1;
+                Background.Draw(gameTime);
+            }
+
             BattleRoyaleBackgroundAlerter?.Draw(gameTime);
             Screen.Ruleset?.Draw(gameTime);
             Container?.Draw(gameTime);
@@ -343,49 +567,538 @@ namespace Quaver.Shared.Screens.Gameplay
 
         public override void Destroy()
         {
-            VideoLoaderToken.Cancel();
-            if (FfmpegProcess != null && !FfmpegProcess.HasExited) try { FfmpegProcess.Kill(); } catch { }
-            VideoBuffer.Clear(); FreeBufferPool.Clear(); 
-            if (RingTextures != null) foreach (var tex in RingTextures) try { tex?.Dispose(); } catch {}
-            VideoBatch?.Dispose(); DebugBoxTexture?.Dispose();
-            if (OnlineManager.Client != null) OnlineManager.Client.OnGameEnded -= OnGameEnded;
-            Screen.Ruleset?.Destroy(); Container?.Destroy();
+            if (VideoLoaderToken != null) VideoLoaderToken.Cancel();
+
+            lock (ProcessLock)
+            {
+                if (FfmpegProcess != null && !FfmpegProcess.HasExited)
+                {
+                    try { FfmpegProcess.Kill(); } catch { }
+                }
+            }
+
+            VideoBuffer.Clear();
+            FreeBufferPool.Clear(); 
+
+            if (RingTextures != null)
+            {
+                foreach (var tex in RingTextures)
+                    try { tex?.Dispose(); } catch {}
+            }
+            try { VideoBatch?.Dispose(); } catch {}
+
+            GC.Collect();
+
+            if (OnlineManager.Client != null)
+                OnlineManager.Client.OnGameEnded -= OnGameEnded;
+
+            Screen.Ruleset?.Destroy();
+            Container?.Destroy();
         }
 
-        private void CreateBackground() { var background = BackgroundHelper.RawTexture ?? UserInterface.MenuBackgroundClear; Background = new BackgroundImage(background, 100 - ConfigManager.BackgroundBrightness.Value, false); }
-        private void CreateProgressBar() {
+        private void CreateBackground()
+        {
+            var background = BackgroundHelper.RawTexture;
+            if (background == null) background = UserInterface.MenuBackgroundClear;
+            Background = new BackgroundImage(background, 100 - ConfigManager.BackgroundBrightness.Value, false);
+        }
+
+        private void CreateProgressBar()
+        {
             if (!ConfigManager.DisplaySongTimeProgress.Value) return;
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-            ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width, 4), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0, skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor) { Parent = Container, Alignment = skin.SongTimeProgressPositionAtTop ? Alignment.TopLeft : Alignment.BotLeft, DestroyIfParentIsNull = false };
+            ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width, 4), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0,
+                skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor)
+            {
+                Parent = Container,
+                Alignment = skin.SongTimeProgressPositionAtTop ? Alignment.TopLeft : Alignment.BotLeft,
+                DestroyIfParentIsNull = false
+            };
         }
-        private void CreateMiniProgressBar() {
+
+        private void CreateMiniProgressBar()
+        {
             if (!ConfigManager.DisplaySongTimeProgress.Value) return;
             var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
-            ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width / skin.MiniSongBarDisplayWidthFactor, skin.MiniSongBarDisplayHeight), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0, skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor, true) { Parent = Container, Alignment = Alignment.MidCenter, X = skin.MiniSongBarDisplayPosX, Y = skin.MiniSongBarDisplayPosY, DestroyIfParentIsNull = false };
+            ProgressBar = new SongTimeProgressBar(Screen, new Vector2(WindowManager.Width / SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayWidthFactor, SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayHeight), 0, Screen.Map.Length / ModHelper.GetRateFromMods(ModManager.Mods), 0,
+                skin.SongTimeProgressInactiveColor, skin.SongTimeProgressActiveColor, true)
+            {
+                Parent = Container,
+                Alignment = Alignment.MidCenter,
+                X = SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayPosX,
+                Y = SkinManager.Skin.Keys[Screen.Map.Mode].MiniSongBarDisplayPosY,
+                DestroyIfParentIsNull = false
+            };
         }
-        private void CreateScoreDisplay() { var skin = SkinManager.Skin.Keys[Screen.Map.Mode]; ScoreDisplay = new GameplayNumberDisplay(NumberDisplayType.Score, "0", new Vector2(skin.ScoreDisplayScale / 100f)) { Parent = Container, Alignment = Alignment.TopLeft, X = skin.ScoreDisplayPosX, Y = skin.ScoreDisplayPosY }; }
-        private void CreateRatingDisplay() { var skin = SkinManager.Skin.Keys[Screen.Map.Mode]; RatingDisplay = new GameplayNumberDisplay(NumberDisplayType.Rating, "0", new Vector2(skin.RatingDisplayScale / 100f)) { Parent = Container, Alignment = Alignment.TopLeft, X = skin.RatingDisplayPosX, Y = 40 + skin.RatingDisplayPosY }; }
-        private void CreateAccuracyDisplay() { var skin = SkinManager.Skin.Keys[Screen.Map.Mode]; AccuracyDisplay = new GameplayNumberDisplay(NumberDisplayType.Accuracy, "0", new Vector2(skin.AccuracyDisplayScale / 100f)) { Parent = Container, Alignment = Alignment.TopRight, X = skin.AccuracyDisplayPosX, Y = skin.AccuracyDisplayPosY }; }
-        public void UpdateScoreAndAccuracyDisplays() { ScoreDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Score); RatingDisplay.UpdateValue(RatingProcessor.CalculateRating(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy)); if (ConfigManager.DisplayRankedAccuracy.Value || Screen.IsSpectatingTournament) AccuracyDisplay.UpdateValue(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy); else AccuracyDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Accuracy); }
-        private void CreateKeysPerSecondDisplay() { var skin = SkinManager.Skin.Keys[Screen.Map.Mode]; KpsDisplay = new KeysPerSecond(NumberDisplayType.Score, "0", new Vector2(skin.KpsDisplayScale / 100f)) { Parent = Container, Alignment = Alignment.TopRight, X = skin.KpsDisplayPosX, Y = 40 + skin.KpsDisplayPosY }; }
-        private void CreateGradeDisplay() => GradeDisplay = new GradeDisplay(Screen) { Parent = Container, Alignment = Alignment.TopRight, X = AccuracyDisplay.X - AccuracyDisplay.Width - 8, Y = AccuracyDisplay.Y };
-        private void CreateScoreboards() {
-            var name = Screen.InReplayMode ? Screen.LoadedReplay.PlayerName : ConfigManager.Username.Value;
-            var avatar = ConfigManager.Username.Value == name ? SteamManager.GetAvatarOrUnknown(SteamUser.GetSteamID().m_SteamID) : UserInterface.UnknownAvatar;
-            SelfScoreboard = new ScoreboardUser(Screen, ScoreboardUserType.Self, name, null, avatar, ModManager.Mods, null, RatingProcessor) { Parent = Container, Alignment = Alignment.MidLeft };
-            ScoreboardLeft = new Scoreboard(OnlineManager.CurrentGame?.Ruleset == MultiplayerGameRuleset.Team ? ScoreboardType.Teams : ScoreboardType.FreeForAll, new List<ScoreboardUser> { SelfScoreboard }) { Parent = Container };
+
+        private void CreateScoreDisplay()
+        {
+            var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
+            ScoreDisplay = new GameplayNumberDisplay(NumberDisplayType.Score, StringHelper.ScoreToString(0),
+                new Vector2(skin.ScoreDisplayScale / 100f, skin.ScoreDisplayScale / 100f))
+            {
+                Parent = Container,
+                Alignment = Alignment.TopLeft,
+                X = SkinManager.Skin.Keys[Screen.Map.Mode].ScoreDisplayPosX,
+                Y = SkinManager.Skin.Keys[Screen.Map.Mode].ScoreDisplayPosY
+            };
         }
-        public void UpdateScoreboardUsers() { ScoreboardLeft?.CalculateScores(); ScoreboardRight?.CalculateScores(); }
-        private void CheckIfNewScoreboardUsers() { /* ... Logic omitted for size, stays same as original ... */ }
-        private void HandlePlayCompletion(GameTime gameTime) {
-            if (!Screen.Failed && !Screen.IsPlayComplete || Screen.IsSongSelectPreview || Screen is TournamentGameplayScreen) return;
+
+        private void CreateRatingDisplay()
+        {
+            var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
+            RatingDisplay = new GameplayNumberDisplay(NumberDisplayType.Rating, StringHelper.RatingToString(0),
+                new Vector2(skin.RatingDisplayScale / 100f, skin.RatingDisplayScale / 100f))
+            {
+                Parent = Container,
+                Alignment = Alignment.TopLeft,
+                X = SkinManager.Skin.Keys[Screen.Map.Mode].RatingDisplayPosX,
+                Y = 40 + SkinManager.Skin.Keys[Screen.Map.Mode].RatingDisplayPosY
+            };
+        }
+
+        private void CreateAccuracyDisplay()
+        {
+            var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
+            AccuracyDisplay = new GameplayNumberDisplay(NumberDisplayType.Accuracy, StringHelper.AccuracyToString(0),
+                new Vector2(skin.AccuracyDisplayScale / 100f, skin.AccuracyDisplayScale / 100f))
+            {
+                Parent = Container,
+                Alignment = Alignment.TopRight,
+                X = SkinManager.Skin.Keys[Screen.Map.Mode].AccuracyDisplayPosX,
+                Y = SkinManager.Skin.Keys[Screen.Map.Mode].AccuracyDisplayPosY
+            };
+        }
+
+        public void UpdateScoreAndAccuracyDisplays()
+        {
+            ScoreDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Score);
+            RatingDisplay.UpdateValue(RatingProcessor.CalculateRating(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy));
+            if (ConfigManager.DisplayRankedAccuracy.Value || Screen.IsSpectatingTournament)
+                AccuracyDisplay.UpdateValue(Screen.Ruleset.StandardizedReplayPlayer.ScoreProcessor.Accuracy);
+            else
+                AccuracyDisplay.UpdateValue(Screen.Ruleset.ScoreProcessor.Accuracy);
+        }
+
+        private void CreateKeysPerSecondDisplay()
+        {
+            var skin = SkinManager.Skin.Keys[Screen.Map.Mode];
+            KpsDisplay = new KeysPerSecond(NumberDisplayType.Score, "0", new Vector2(skin.KpsDisplayScale / 100f, skin.KpsDisplayScale / 100f))
+            {
+                Parent = Container,
+                Alignment = Alignment.TopRight,
+                X = SkinManager.Skin.Keys[Screen.Map.Mode].KpsDisplayPosX,
+                Y = 40 + SkinManager.Skin.Keys[Screen.Map.Mode].KpsDisplayPosY
+            };
+        }
+
+        private void CreateGradeDisplay() => GradeDisplay = new GradeDisplay(Screen)
+        {
+            Parent = Container,
+            Alignment = Alignment.TopRight,
+            X = AccuracyDisplay.X - AccuracyDisplay.Width - 8,
+            Y = AccuracyDisplay.Y
+        };
+
+        private void CreateScoreboards()
+        {
+            var scoreboardName = Screen.InReplayMode ? Screen.LoadedReplay.PlayerName : ConfigManager.Username.Value;
+            var selfAvatar = ConfigManager.Username.Value == scoreboardName ? SteamManager.GetAvatarOrUnknown(SteamUser.GetSteamID().m_SteamID)
+                : UserInterface.UnknownAvatar;
+
+            SelfScoreboard = new ScoreboardUser(Screen, ScoreboardUserType.Self, scoreboardName, null, selfAvatar,
+                ModManager.Mods, null, RatingProcessor)
+            {
+                Parent = Container,
+                Alignment = Alignment.MidLeft
+            };
+
+            var users = new List<ScoreboardUser> { SelfScoreboard };
+
+            if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team)
+            {
+                ScoreboardRight = new Scoreboard(ScoreboardType.Teams,
+                    OnlineManager.GetTeam(OnlineManager.Self.OnlineUser.Id) == MultiplayerTeam.Blue ? users : new List<ScoreboardUser>(), MultiplayerTeam.Blue)
+                {
+                    Parent = Container,
+                    Alignment = Alignment.TopLeft,
+                };
+            }
+
+            var scoreboardType = OnlineManager.CurrentGame != null &&
+                                 OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team
+                                ? ScoreboardType.Teams
+                                : ScoreboardType.FreeForAll;
+
+            ScoreboardLeft = new Scoreboard(scoreboardType,
+                OnlineManager.CurrentGame == null || OnlineManager.GetTeam(OnlineManager.Self.OnlineUser.Id) == MultiplayerTeam.Red ?
+                    users : new List<ScoreboardUser>())
+            { Parent = Container };
+
+            ScoreboardLeft?.Users.ForEach(x => x.SetImage());
+            ScoreboardRight?.Users.ForEach(x => x.SetImage());
+        }
+
+        public void UpdateScoreboardUsers()
+        {
+            ScoreboardLeft?.CalculateScores();
+            ScoreboardRight?.CalculateScores();
+        }
+
+        private void CheckIfNewScoreboardUsers()
+        {
+            if (Screen.IsPlayTesting || StopCheckingForScoreboardUsers)
+                return;
+
+            var mapScores = Screen.IsMultiplayerGame ? Screen.LocalScores : MapManager.Selected.Value.Scores.Value;
+
+            if (mapScores == null || mapScores.Count <= 0 || (ScoreboardLeft.Users?.Count < 1 && ScoreboardRight != null && ScoreboardRight.Users.Count < 1))
+                return;
+
+            var maxRating = new RatingProcessorKeys(MapManager.Selected.Value.DifficultyFromMods(ModManager.Mods)).CalculateRating(100);
+
+            for (var i = 0; i < mapScores.Count; i++)
+            {
+                if (OnlineManager.CurrentGame == null && ScoreboardLeft?.Users?.Count == 5)
+                    break;
+
+                ScoreboardUser user;
+
+                if (OnlineManager.CurrentGame == null &&
+                    !ConfigManager.DisplayUnbeatableScoresDuringGameplay.Value && mapScores[i].PerformanceRating > maxRating)
+                    continue;
+
+                if (OnlineManager.CurrentGame == null && mapScores[i].Grade == Grade.None)
+                    continue;
+
+                if (mapScores[i].IsOnline)
+                {
+                    var judgements = mapScores[i].OnlineJudgements;
+
+                    if (judgements == null || !OnlineManager.IsDonator)
+                        judgements = new List<Judgement>();
+
+                    user = new ScoreboardUser(Screen, ScoreboardUserType.Other, $"{mapScores[i].Name}",
+                        judgements, UserInterface.UnknownAvatar, (ModIdentifier)mapScores[i].Mods, mapScores[i])
+                    {
+                        Parent = Container,
+                        Alignment = Alignment.MidLeft
+                    };
+
+                    if (OnlineManager.CurrentGame != null &&
+                        OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team && OnlineManager.GetTeam(user.LocalScore.PlayerId) == MultiplayerTeam.Blue)
+                    {
+                        user.Scoreboard = ScoreboardRight;
+                        user.X = WindowManager.Width;
+                    }
+                    else
+                    {
+                        user.Scoreboard = ScoreboardLeft;
+                    }
+
+                    user.SetImage();
+
+                    var processor = user.Processor as ScoreProcessorKeys;
+                    processor.Accuracy = (float)mapScores[i].Accuracy;
+                    processor.MaxCombo = mapScores[i].MaxCombo;
+                    processor.Score = mapScores[i].TotalScore;
+                    processor.PlayerName = mapScores[i].Name;
+                    processor.UserId = mapScores[i].PlayerId;
+                    processor.SteamId = (ulong)mapScores[i].SteamId;
+
+                    if (judgements.Count == 0)
+                    {
+                        user.Score.Text = $"{user.RatingProcessor.CalculateRating(processor.Accuracy):0.00} / {StringHelper.AccuracyToString(processor.Accuracy)}";
+                        user.Combo.Text = $"{processor.MaxCombo}x";
+                    }
+                }
+                else
+                {
+                    var breakdownHits = GzipHelper.Decompress(mapScores[i].JudgementBreakdown);
+
+                    var judgements = new List<Judgement>();
+
+                    foreach (var hit in breakdownHits)
+                        judgements.Add((Judgement)int.Parse(hit.ToString()));
+
+                    user = new ScoreboardUser(Screen, ScoreboardUserType.Other, $"{mapScores[i].Name}",
+                        judgements, UserInterface.UnknownAvatar, (ModIdentifier)mapScores[i].Mods, mapScores[i])
+                    {
+                        Parent = Container,
+                        Alignment = Alignment.MidLeft
+                    };
+
+                    if (OnlineManager.CurrentGame != null &&
+                        OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team && OnlineManager.GetTeam(user.LocalScore.PlayerId) == MultiplayerTeam.Blue)
+                    {
+                        user.Scoreboard = ScoreboardRight;
+                    }
+                    else
+                    {
+                        user.Scoreboard = ScoreboardLeft;
+                    }
+
+                    user.SetImage();
+
+                    for (var j = 0; j < Screen.Ruleset.ScoreProcessor.TotalJudgementCount && i < judgements.Count; j++)
+                    {
+                        var processor = user.Processor as ScoreProcessorKeys;
+                        processor?.CalculateScore(judgements[i]);
+                    }
+                }
+
+                if (OnlineManager.CurrentGame != null && OnlineManager.CurrentGame.Ruleset == MultiplayerGameRuleset.Team &&
+                    OnlineManager.GetTeam(user.LocalScore.PlayerId) == MultiplayerTeam.Blue)
+                {
+                    ScoreboardRight.Users.Add(user);
+                }
+                else
+                {
+                    ScoreboardLeft.Users.Add(user);
+                }
+            }
+
+            ScoreboardLeft.SetTargetYPositions();
+            ScoreboardRight?.SetTargetYPositions();
+
+            if (ProgressBar != null)
+                ProgressBar.Parent = Container;
+
+            Transitioner.Parent = Container;
+
+            if (PauseScreen != null)
+                PauseScreen.Parent = Container;
+
+            StopCheckingForScoreboardUsers = true;
+            Screen.SetRichPresence();
+        }
+
+        private void HandlePlayCompletion(GameTime gameTime)
+        {
+            if (!Screen.Failed && !Screen.IsPlayComplete || Screen.IsSongSelectPreview || Screen is TournamentGameplayScreen)
+                return;
+
+            if (Screen.Failed && !Screen.HasQuit && Screen.Ruleset.ScoreProcessor.Mods.HasFlag(ModIdentifier.NoMiss))
+            {
+                Screen.Retry();
+                return;
+            }
+
             Screen.TimeSincePlayEnded += gameTime.ElapsedGameTime.TotalMilliseconds;
-            if (Screen.Failed && !ScreenChangedToRedOnFailure) { Transitioner.FadeTo(Screen.HasQuit ? 1 : 0.75f, Easing.Linear, Screen.FailFadeTime); Transitioner.Tint = Screen.HasQuit ? Color.Black : Color.Red; ScreenChangedToRedOnFailure = true; if (!Screen.HasQuit) SkinManager.Skin.SoundFailure.CreateChannel().Play(); }
-            if (!ResultsScreenLoadInitiated) { Screen.TimePlayEnd = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); Screen.Exit(() => new ResultsScreen(Screen), 500); ResultsScreenLoadInitiated = true; }
+
+            if (Screen.Exiting && Screen.Failed)
+            {
+                if (Screen.TimeSincePlayEnded >= Screen.FailFadeTime && !AudioEngine.Track.IsDisposed)
+                {
+                    AudioEngine.Track?.Dispose();
+                    Screen.IsPaused = true;
+                }
+
+                return;
+            }
+
+            if (Screen.Failed && !ScreenChangedToRedOnFailure)
+            {
+                var tint = Screen.HasQuit ? Color.Black : Color.Red;
+                Transitioner.FadeTo(Screen.HasQuit ? 1 : 0.75f, Easing.Linear, Screen.FailFadeTime);
+                Transitioner.Tint = tint;
+                ScreenChangedToRedOnFailure = true;
+
+                if (!Screen.HasQuit)
+                    SkinManager.Skin.SoundFailure.CreateChannel().Play();
+            }
+
+            if (!ResultsScreenLoadInitiated)
+            {
+                Screen.TimePlayEnd = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                if (OnlineManager.IsBeingSpectated)
+                {
+                    Screen.SendReplayFramesToServer(true, !OnlineManager.IsSpectatingSomeone);
+                }
+
+                if (Screen.IsPlayTesting)
+                {
+                    if (AudioEngine.Track.IsPlaying)
+                    {
+                        AudioEngine.Track.Pause();
+                        AudioEngine.Track.Seek(Screen.PlayTestAudioTime);
+                    }
+
+                    if (Screen.IsTestPlayingInNewEditor)
+                        Screen.ExitToNewEditor();
+                    else
+                        Screen.Exit(() => new EditorScreen(Screen.OriginalEditorMap));
+
+                    ResultsScreenLoadInitiated = true;
+                    return;
+                }
+
+                if (Screen.IsCalibratingOffset)
+                {
+                    Screen.HandleSuggestedOffsetCalculations();
+                    ResultsScreenLoadInitiated = true;
+                    return;
+                }
+
+                if (OnlineManager.CurrentGame != null)
+                {
+                    try
+                    {
+                        Screen.Ruleset.UpdateStandardizedScoreProcessor(true);
+                        Screen.SendJudgementsToServer(true);
+
+                        OnlineManager.Client?.FinishMultiplayerGameSession();
+                        ResultsScreenLoadInitiated = true;
+                    }
+                    catch (Exception e)
+                    {
+                    }
+
+                    return;
+                }
+
+                Screen.Exit(() =>
+                {
+                    if (Screen.HasQuit && ConfigManager.SkipResultsScreenAfterQuit.Value)
+                    {
+                        if (ModManager.Mods.HasFlag(ModIdentifier.Paused))
+                            ModManager.RemoveMod(ModIdentifier.Paused);
+
+                        return new SelectionScreen();
+                    }
+
+                    if (Screen.InReplayMode && Screen.LoadedReplay != null)
+                    {
+                        Screen.LoadedReplay.FromScoreProcessor(Screen.Ruleset.ScoreProcessor);
+                        return new ResultsScreen(MapManager.Selected.Value, Screen.LoadedReplay);
+                    }
+
+                    return new ResultsScreen(Screen);
+                }, Screen.Failed ? Screen.FailFadeTime : 500);
+
+                ResultsScreenLoadInitiated = true;
+            }
+
+            if (Screen.TimeSincePlayEnded <= 1200 || !ClearToExitScreen)
+                return;
+
+            if (Screen.Failed)
+                Transitioner.FadeToColor(Color.Black, gameTime.ElapsedGameTime.TotalMilliseconds, 150);
+
+            if (!FadingOnPlayCompletion)
+            {
+                Transitioner.Animations.Clear();
+
+                var initialAlpha = Screen.Failed ? 0.65f : 0;
+
+                Transitioner.Animations.Add(new Animation(AnimationProperty.Alpha, Easing.Linear, initialAlpha, 1, 1000));
+                FadingOnPlayCompletion = true;
+            }
+
+            if (Screen.TimeSincePlayEnded >= 3000)
+            {
+                BackgroundManager.Background.Dim = 0;
+            }
         }
-        public void UpdateGradeDisplay() { GradeDisplay.X = AccuracyDisplay.X - AccuracyDisplay.Width - 8; GradeDisplay.Height = AccuracyDisplay.Height; GradeDisplay.UpdateWidth(); }
-        private void OnGameEnded(object sender, GameEndedEventArgs e) { Screen.IsPaused = true; Screen.Exit(() => new ResultsScreen(Screen, OnlineManager.CurrentGame, GetProcessorsFromScoreboard(ScoreboardLeft), GetProcessorsFromScoreboard(ScoreboardRight))); }
-        public List<ScoreProcessor> GetProcessorsFromScoreboard(Scoreboard s) { var l = new List<ScoreProcessor>(); if (s == null) return l; foreach (var u in s.Users) if (!u.HasQuit) l.Add(u.Processor); return l; }
-        private void HandleWaitingForPlayersDialog() { if (MultiplayerEndTime != null) MultiplayerEndTime.Visible = Screen.IsPlayComplete; }
+
+        public void UpdateGradeDisplay()
+        {
+            GradeDisplay.X = AccuracyDisplay.X - AccuracyDisplay.Width - 8;
+            GradeDisplay.Height = AccuracyDisplay.Height;
+            GradeDisplay.UpdateWidth();
+        }
+
+        private void OnBackgroundLoaded(object sender, BackgroundLoadedEventArgs e)
+        {
+            if (e.Map != MapManager.Selected.Value)
+                return;
+
+            FadeBackgroundToDim();
+        }
+
+        private void FadeBackgroundToDim()
+        {
+            BackgroundManager.Background.BrightnessSprite.Animations.Clear();
+
+            var t = new Animation(AnimationProperty.Alpha, Easing.Linear, BackgroundManager.Background.BrightnessSprite.Alpha,
+                (100 - ConfigManager.BackgroundBrightness.Value) / 100f, 300);
+
+            BackgroundManager.Background.BrightnessSprite.Animations.Add(t);
+        }
+
+        private void OnGameEnded(object sender, GameEndedEventArgs e)
+        {
+            var manager = (HitObjectManagerKeys)Screen.Ruleset.HitObjectManager;
+
+            Screen.MultiplayerMatchEndedPrematurely = !Screen.IsPlayComplete && manager.NextHitObject != null
+                                                      && (Screen.Timing.Time >= Screen.Map.Length || AudioEngine.Track.Time >= AudioEngine.Track.Length);
+
+            if (Screen is TournamentGameplayScreen)
+            {
+                if (!Screen.Exiting && e.Force)
+                    Screen.Exit(() => new MultiplayerGameScreen());
+                return;
+            }
+
+            Screen.IsPaused = true;
+
+            Screen.Exit(() => new ResultsScreen(Screen, OnlineManager.CurrentGame,
+                GetProcessorsFromScoreboard(ScoreboardLeft), GetProcessorsFromScoreboard(ScoreboardRight)));
+        }
+
+        private List<ScoreboardUser> GetScoreboardUsers()
+        {
+            var scoreboardUsers = new List<ScoreboardUser>();
+
+            if (ScoreboardLeft.Users.Count != 0)
+            {
+                var users = ScoreboardLeft.Users.Where(x => !x.HasQuit);
+                scoreboardUsers.AddRange(users);
+            }
+
+            if (ScoreboardRight != null && ScoreboardRight.Users.Count != 0)
+            {
+                var users = ScoreboardRight.Users.Where(x => !x.HasQuit);
+                scoreboardUsers.AddRange(users);
+            }
+
+            return scoreboardUsers;
+        }
+
+        public List<ScoreProcessor> GetProcessorsFromScoreboard(Scoreboard scoreboard)
+        {
+            var processors = new List<ScoreProcessor>();
+
+            if (scoreboard == null)
+                return processors;
+
+            foreach (var user in scoreboard.Users)
+            {
+                if (user.HasQuit)
+                    continue;
+
+                processors.Add(user.Processor);
+            }
+
+            return processors;
+        }
+
+        private void HandleWaitingForPlayersDialog()
+        {
+            if (MultiplayerEndTime == null)
+                return;
+
+            var previouslyVisible = MultiplayerEndTime.Visible;
+
+            MultiplayerEndTime.Visible = Screen.IsPlayComplete;
+
+            if (!previouslyVisible && MultiplayerEndTime.Visible)
+            {
+                MultiplayerEndTime.ClearAnimations();
+                MultiplayerEndTime.Alpha = 0;
+                MultiplayerEndTime.FadeTo(1, Easing.Linear, 400);
+            }
+        }
     }
 }
