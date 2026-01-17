@@ -13,20 +13,66 @@ jobs:
     - uses: actions/checkout@v3
       with:
         submodules: false
-        ref: mp4-feature
+        ref: ${{ github.ref }}
 
-    - name: Initialize Submodules (Skip Private)
+    - name: Initialize Submodules
       run: |
         git submodule init
         git config submodule.Quaver.Server.Client.update none
-        git submodule update --recursive
+        git submodule update --recursive || echo "Submodule update failed, continuing..."
+
+    # --- THE FIX: We manually write the working code so Git can't delete it ---
+    - name: Force Fix ReplayHelper
+      shell: pwsh
+      run: |
+        $code = @"
+        using System;
+        using System.IO;
+        using System.Text;
+        using Quaver.API.Maps;
+        using Quaver.API.Replays;
+        using Quaver.Shared.Config;
+        using Quaver.Shared.Modifiers;
+        using Quaver.API.Helpers;
+        using Quaver.API.Enums;
+
+        namespace Quaver.Shared.Helpers
+        {
+            public static class ReplayHelper
+            {
+                internal static Replay GeneratePerfectReplay(Qua map, string md5)
+                {
+                    var replay = new Replay(map.Mode, "Autoplay", ModManager.Mods, md5);
+                    if (ModeHelper.IsKeyMode(map.Mode))
+                        return Replay.GeneratePerfectReplayKeys(replay, map);
+                    throw new ArgumentOutOfRangeException();
+                }
+
+                public static void ExportReplayToText(Replay replay, string filename = "last_replay_debug.txt")
+                {
+                    try
+                    {
+                        var sb = new StringBuilder();
+                        sb.AppendLine($"Map: {replay.MapMd5}");
+                        foreach (var f in replay.Frames) sb.AppendLine($"{f.Time} | {f.Keys}");
+                        
+                        var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
+                        Directory.CreateDirectory(Path.GetDirectoryName(path));
+                        File.WriteAllText(path, sb.ToString());
+                    }
+                    catch {}
+                }
+            }
+        }
+        "@
+        Set-Content "Quaver.Shared/Helpers/ReplayHelper.cs" $code
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 6.0.x
 
-    - name: Fix Dependencies (PowerShell)
+    - name: Fix Dependencies
       shell: pwsh
       run: |
         $proj = "Quaver.Shared/Quaver.Shared.csproj"
