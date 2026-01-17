@@ -37,15 +37,16 @@ namespace Quaver.Shared.Helpers
                     sb.AppendLine($"{frame.Time.ToString().PadRight(9)} | {frame.Keys}");
                 }
 
-                // Save to the folder where Quaver.exe is running
                 var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, filename);
-                
                 File.WriteAllText(path, sb.ToString());
-                Logger.Log(LogType.Runtime, $"[ReplayHelper] Saved debug replay to: {path}");
+                
+                // FIXED: String first, then Level, then Type
+                Logger.Log($"[ReplayHelper] Saved debug replay to: {path}", LogLevel.Important, LogType.Runtime);
             }
             catch (Exception e)
             {
-                Logger.Log(LogType.Runtime, $"[ReplayHelper] Error saving replay: {e.Message}");
+                // FIXED: String first
+                Logger.Log($"[ReplayHelper] Error saving replay: {e.Message}", LogLevel.Important, LogType.Runtime);
             }
         }
     }
