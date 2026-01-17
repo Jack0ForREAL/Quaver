@@ -8,6 +8,7 @@ using Quaver.API.Maps;
 using Quaver.API.Replays;
 using Quaver.Shared.Config;
 using Quaver.Shared.Modifiers;
+using Wobble.Logging;
 
 namespace Quaver.Shared.Helpers
 {
@@ -35,11 +36,17 @@ namespace Quaver.Shared.Helpers
                 {
                     sb.AppendLine($"{frame.Time.ToString().PadRight(9)} | {frame.Keys}");
                 }
-                var path = Path.Combine(ConfigManager.DataDirectory.Value, "Replays", filename);
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
+
+                // Save to the folder where Quaver.exe is running
+                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, filename);
+                
                 File.WriteAllText(path, sb.ToString());
+                Logger.Log(LogType.Runtime, $"[ReplayHelper] Saved debug replay to: {path}");
             }
-            catch {}
+            catch (Exception e)
+            {
+                Logger.Log(LogType.Runtime, $"[ReplayHelper] Error saving replay: {e.Message}");
+            }
         }
     }
 }
