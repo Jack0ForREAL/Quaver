@@ -135,8 +135,8 @@ namespace Quaver.Shared.Screens.Selection
             HandleKeyPressF2();
             HandleKeyPressF3();
             HandleKeyPressF4();
-            HandleKeyPressF5();
-            HandleKeyPressF6(); // ADDED F6
+            HandleKeyPressF5();  // Handles both F5 and Ctrl+F5
+            HandleKeyPressF8();  // Backup bind for Smart Refresh
             HandleKeyPressEnter();
             HandleKeyPressControlInput();
             HandleThumb1MouseButtonClick();
@@ -148,17 +148,48 @@ namespace Quaver.Shared.Screens.Selection
         private void HandleKeyPressF2() { if (!KeyboardManager.IsUniqueKeyPress(Keys.F2)) return; if (KeyboardManager.IsShiftDown()) SelectPrevRandomMap(); else SelectRandomMap(); }
         private void HandleKeyPressF3() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F3)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.MapPreview) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.MapPreview; }
         private void HandleKeyPressF4() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F4)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.UserProfile) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.UserProfile; }
-        private void HandleKeyPressF5() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return; DialogManager.Show(new RefreshDialog()); }
-
-        // --- NEW KEYBIND F6: QUICK IMPORT ---
-        private void HandleKeyPressF6()
+        
+        // --- UPDATED F5 HANDLER (Handles both Normal and Smart Refresh) ---
+        private void HandleKeyPressF5() 
         {
-            if (!KeyboardManager.IsUniqueKeyPress(Keys.F6)) return;
-            NotificationManager.Show(NotificationLevel.Info, "Quick scanning for new maps...");
+            if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return;
+
+            if (KeyboardManager.IsCtrlDown())
+            {
+                // Smart Refresh Logic
+                Logger.Log("[SmartRefresh] Ctrl+F5 detected!", LogLevel.Important, LogType.Runtime);
+                NotificationManager.Show(NotificationLevel.Info, "Smart Scanning for new maps...");
+                PerformSmartRefresh();
+            }
+            else
+            {
+                // Normal Refresh Logic
+                DialogManager.Show(new RefreshDialog());
+            }
+        }
+
+        // --- BACKUP KEYBIND (F8) ---
+        private void HandleKeyPressF8()
+        {
+            if (!KeyboardManager.IsUniqueKeyPress(Keys.F8)) return;
+            Logger.Log("[SmartRefresh] F8 detected!", LogLevel.Important, LogType.Runtime);
+            NotificationManager.Show(NotificationLevel.Info, "Smart Scanning for new maps (F8)...");
+            PerformSmartRefresh();
+        }
+
+        private void PerformSmartRefresh()
+        {
             ThreadScheduler.Run(() =>
             {
                 var newMaps = MapManager.DetectNewMapsets();
-                if (newMaps.Count == 0) { NotificationManager.Show(NotificationLevel.Success, "No new maps found."); return; }
+                Logger.Log($"[SmartRefresh] Scan found {newMaps.Count} new folders.", LogLevel.Important, LogType.Runtime);
+                
+                if (newMaps.Count == 0) 
+                { 
+                    NotificationManager.Show(NotificationLevel.Success, "No new maps found."); 
+                    return; 
+                }
+                
                 NotificationManager.Show(NotificationLevel.Success, $"Found {newMaps.Count} new mapsets! Importing...");
                 Exit(() => new ImportingScreen(newMaps, false));
             });
@@ -355,7 +386,7 @@ namespace Quaver.Shared.Screens.Selection
             if (MapManager.Selected.Value == null) return;
             if (IsExportingMapset) { NotificationManager.Show(NotificationLevel.Warning, "Slow down! You must wait for your previous mapset to export"); return; }
             IsExportingMapset = true;
-            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLevel.Success, $"Successfully exported {MapManager.Selected.Value.Mapset.Artist} - {MapManager.Selected.Value.Mapset.Title}!"); });
+            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLev
         }
 
         private void SetRichPresence()
