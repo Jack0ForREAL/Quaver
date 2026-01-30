@@ -135,8 +135,7 @@ namespace Quaver.Shared.Screens.Selection
             HandleKeyPressF2();
             HandleKeyPressF3();
             HandleKeyPressF4();
-            HandleKeyPressF5();  // Handles both F5 and Ctrl+F5
-            HandleKeyPressF8();  // Backup bind for Smart Refresh
+            HandleKeyPressF5();  // Handles both Smart (Default) and Ctrl (Full)
             HandleKeyPressEnter();
             HandleKeyPressControlInput();
             HandleThumb1MouseButtonClick();
@@ -149,40 +148,34 @@ namespace Quaver.Shared.Screens.Selection
         private void HandleKeyPressF3() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F3)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.MapPreview) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.MapPreview; }
         private void HandleKeyPressF4() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F4)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.UserProfile) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.UserProfile; }
         
-        // --- UPDATED F5 HANDLER (Handles both Normal and Smart Refresh) ---
+        // --- SMART REFRESH IMPLEMENTATION ---
         private void HandleKeyPressF5() 
         {
             if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return;
 
+            // If Ctrl is held down, do the old "Delete DB + Full Refresh" (The slow one)
             if (KeyboardManager.IsCtrlDown())
             {
-                // Smart Refresh Logic
-                Logger.Log("[SmartRefresh] Ctrl+F5 detected!", LogLevel.Important, LogType.Runtime);
-                NotificationManager.Show(NotificationLevel.Info, "Smart Scanning for new maps...");
-                PerformSmartRefresh();
+                NotificationManager.Show(NotificationLevel.Warning, "Full Database Refresh triggered...");
+                DialogManager.Show(new RefreshDialog());
             }
             else
             {
-                // Normal Refresh Logic
-                DialogManager.Show(new RefreshDialog());
+                // Default F5 behavior: Smart Refresh (The fast one)
+                Logger.Log("[SmartRefresh] F5 detected. Starting scan...", LogLevel.Important, LogType.Runtime);
+                NotificationManager.Show(NotificationLevel.Info, "Scanning for new maps...");
+                PerformSmartRefresh();
             }
-        }
-
-        // --- BACKUP KEYBIND (F8) ---
-        private void HandleKeyPressF8()
-        {
-            if (!KeyboardManager.IsUniqueKeyPress(Keys.F8)) return;
-            Logger.Log("[SmartRefresh] F8 detected!", LogLevel.Important, LogType.Runtime);
-            NotificationManager.Show(NotificationLevel.Info, "Smart Scanning for new maps (F8)...");
-            PerformSmartRefresh();
         }
 
         private void PerformSmartRefresh()
         {
             ThreadScheduler.Run(() =>
             {
+                // Get list of folders that exist in Songs folder but are NOT in the database
                 var newMaps = MapManager.DetectNewMapsets();
-                Logger.Log($"[SmartRefresh] Scan found {newMaps.Count} new folders.", LogLevel.Important, LogType.Runtime);
+                
+                Logger.Log($"[SmartRefresh] Scan complete. Found {newMaps.Count} new folders.", LogLevel.Important, LogType.Runtime);
                 
                 if (newMaps.Count == 0) 
                 { 
@@ -191,6 +184,9 @@ namespace Quaver.Shared.Screens.Selection
                 }
                 
                 NotificationManager.Show(NotificationLevel.Success, $"Found {newMaps.Count} new mapsets! Importing...");
+                
+                // Pass the list of new directories to ImportingScreen.
+                // ImportingScreen will detect they are folders and run the import logic on them.
                 Exit(() => new ImportingScreen(newMaps, false));
             });
         }
