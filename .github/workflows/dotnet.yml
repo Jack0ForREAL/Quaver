@@ -1,7 +1,7 @@
 name: Build Quaver Mod
 
 on:
-  workflow_dispatch: # This ensures it ONLY builds when you tell it to.
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,27 +19,37 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    - name: Apply MP4 Mod & Replay Patches
+    - name: Apply All Patches Automatically
       shell: pwsh
       run: |
-        Write-Host "Force overwriting submodule files with custom Mod Patches..."
+        $patchDir = "BuildPatches"
+        $targetRoot = "Quaver.Shared"
 
-        # 1. Overwrite ReplayHelper
-        if (Test-Path "BuildPatches/ReplayHelper.cs") {
-            Copy-Item -Path "BuildPatches/ReplayHelper.cs" -Destination "Quaver.Shared/Helpers/ReplayHelper.cs" -Force
+        Write-Host "Starting Auto-Patcher..."
+
+        if (Test-Path $patchDir) {
+            # Get all .cs files in your patches folder
+            $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
+
+            foreach ($patch in $patches) {
+                Write-Host "Searching for location of: $($patch.Name)"
+
+                # Search the game folder for a file with the same name
+                $destination = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | Select-Object -First 1
+
+                if ($destination) {
+                    Write-Host "Found at: $($destination.FullName)"
+                    Write-Host "Overwriting..."
+                    Copy-Item -Path $patch.FullName -Destination $destination.FullName -Force
+                } else {
+                    Write-Host "::warning::Could not find an existing file named $($patch.Name) in the game code. If this is a NEW file, it was skipped."
+                }
+            }
+        } else {
+             Write-Host "No BuildPatches folder found. Skipping."
         }
         
-        # 2. Overwrite GameplayScreen
-        if (Test-Path "BuildPatches/GameplayScreen.cs") {
-            Copy-Item -Path "BuildPatches/GameplayScreen.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs" -Force
-        }
-
-        # 3. Overwrite GameplayScreenView
-        if (Test-Path "BuildPatches/GameplayScreenView.cs") {
-            Copy-Item -Path "BuildPatches/GameplayScreenView.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreenView.cs" -Force
-        }
-
-        Write-Host "Patches applied successfully."
+        Write-Host "Patching complete."
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
@@ -49,7 +59,6 @@ jobs:
     - name: Fix Dependencies (Reference Patching)
       shell: pwsh
       run: |
-        # Fix the Project Reference to Server.Client
         $proj = "Quaver.Shared/Quaver.Shared.csproj"
         if (Test-Path $proj) {
             $content = Get-Content $proj -Raw
@@ -57,7 +66,6 @@ jobs:
             Set-Content $proj $content
         }
         
-        # Add TimeAgo package
         dotnet add Quaver.Shared/Quaver.Shared.csproj package TimeAgo
 
     - name: Restore dependencies
@@ -69,5 +77,5 @@ jobs:
     - name: Upload Game Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Quaver-Video-Mod
+        name: Quaver-Modded-Build
         path: ./QuaverMod
