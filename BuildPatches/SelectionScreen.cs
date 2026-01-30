@@ -135,7 +135,7 @@ namespace Quaver.Shared.Screens.Selection
             HandleKeyPressF2();
             HandleKeyPressF3();
             HandleKeyPressF4();
-            HandleKeyPressF5();  // Handles both Smart (Default) and Ctrl (Full)
+            HandleKeyPressF5();  // Handles Smart/Full Refresh
             HandleKeyPressEnter();
             HandleKeyPressControlInput();
             HandleThumb1MouseButtonClick();
@@ -153,42 +153,41 @@ namespace Quaver.Shared.Screens.Selection
         {
             if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return;
 
-            // If Ctrl is held down, do the old "Delete DB + Full Refresh" (The slow one)
+            // Ctrl + F5 = Full Refresh (Slow, deletes DB)
             if (KeyboardManager.IsCtrlDown())
             {
-                NotificationManager.Show(NotificationLevel.Warning, "Full Database Refresh triggered...");
                 DialogManager.Show(new RefreshDialog());
             }
             else
             {
-                // Default F5 behavior: Smart Refresh (The fast one)
-                Logger.Log("[SmartRefresh] F5 detected. Starting scan...", LogLevel.Important, LogType.Runtime);
+                // F5 = Smart Refresh (Scans for new Folders or Files)
                 NotificationManager.Show(NotificationLevel.Info, "Scanning for new maps...");
-                PerformSmartRefresh();
+                
+                ThreadScheduler.Run(() =>
+                {
+                    var foundSomething = MapManager.ReloadNewMapsets();
+                    
+                    if (foundSomething)
+                    {
+                        // Case 1: Archives were found (.osz), go to Import Screen
+                        if (MapsetImporter.Queue.Count > 0)
+                        {
+                            Exit(() => new ImportingScreen(null, true, false)); 
+                        }
+                        // Case 2: Only folders were found, just refresh UI
+                        else
+                        {
+                            NotificationManager.Show(NotificationLevel.Success, "New maps loaded!");
+                            lock (AvailableMapsets.Value) 
+                                AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery);
+                        }
+                    }
+                    else
+                    {
+                         NotificationManager.Show(NotificationLevel.Success, "No new maps found.");
+                    }
+                });
             }
-        }
-
-        private void PerformSmartRefresh()
-        {
-            ThreadScheduler.Run(() =>
-            {
-                // Get list of folders that exist in Songs folder but are NOT in the database
-                var newMaps = MapManager.DetectNewMapsets();
-                
-                Logger.Log($"[SmartRefresh] Scan complete. Found {newMaps.Count} new folders.", LogLevel.Important, LogType.Runtime);
-                
-                if (newMaps.Count == 0) 
-                { 
-                    NotificationManager.Show(NotificationLevel.Success, "No new maps found."); 
-                    return; 
-                }
-                
-                NotificationManager.Show(NotificationLevel.Success, $"Found {newMaps.Count} new mapsets! Importing...");
-                
-                // Pass the list of new directories to ImportingScreen.
-                // ImportingScreen will detect they are folders and run the import logic on them.
-                Exit(() => new ImportingScreen(newMaps, false));
-            });
         }
 
         private void HandleKeyPressEnter()
@@ -382,7 +381,7 @@ namespace Quaver.Shared.Screens.Selection
             if (MapManager.Selected.Value == null) return;
             if (IsExportingMapset) { NotificationManager.Show(NotificationLevel.Warning, "Slow down! You must wait for your previous mapset to export"); return; }
             IsExportingMapset = true;
-            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLev
+            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLevel.Success, "
         }
 
         private void SetRichPresence()
