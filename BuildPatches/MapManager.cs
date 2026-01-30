@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Emik;
 using Microsoft.Xna.Framework.Graphics;
 using Quaver.API.Enums;
@@ -292,43 +293,69 @@ namespace Quaver.Shared.Database.Maps
 
         private static void ShowFallbackMapDeletionDialog(string label, Action onYes) => DialogManager.Show(new YesNoDialog("Map Deletion", $"Failed to move the {label} in the recycle bin.\nWould you like to delete it instead?", onYes));
 
-        // --- NEW FEATURE: QUICK REFRESH ---
         /// <summary>
-        /// Scans the Songs directory and returns a list of full paths to mapset folders
-        /// that are NOT currently loaded in the database.
+        /// This is the Logic for Smart Refresh.
+        /// It loads new Folders directly into the DB, and returns true if anything was loaded.
+        /// It also populates MapsetImporter.Queue with any archive files (.osz, .qp).
         /// </summary>
-        public static List<string> DetectNewMapsets()
+        public static bool ReloadNewMapsets()
         {
-            var newPaths = new List<string>();
-            try 
+            var loadedCount = 0;
+            var songDir = ConfigManager.SongDirectory.Value;
+            
+            if (string.IsNullOrEmpty(songDir) || !Directory.Exists(songDir)) 
+                return false;
+
+            // 1. Check for Archives (files to import via ImportingScreen)
+            var files = Directory.GetFiles(songDir);
+            foreach (var file in files)
             {
-                var songDirectory = ConfigManager.SongDirectory.Value;
-                
-                if (string.IsNullOrEmpty(songDirectory) || !Directory.Exists(songDirectory)) 
-                    return newPaths;
-
-                var directories = Directory.GetDirectories(songDirectory);
-                
-                // Create a HashSet of currently loaded directory names for O(1) lookups
-                var loadedMapsets = new HashSet<string>(Mapsets.Select(x => x.Directory));
-
-                foreach (var dir in directories)
+                if (file.EndsWith(".qp") || file.EndsWith(".osz") || file.EndsWith(".sm"))
                 {
-                    // Get the folder name (e.g., "123 Artist - Title")
-                    var dirName = new DirectoryInfo(dir).Name;
-                    
-                    // If the database doesn't know about this folder, it's new
-                    if (!loadedMapsets.Contains(dirName))
+                    if (!MapsetImporter.Queue.Contains(file))
+                        MapsetImporter.Queue.Add(file);
+                }
+            }
+
+            // 2. Check for New Folders (Instant Load)
+            var directories = Directory.GetDirectories(songDir);
+            var loadedDirNames = new HashSet<string>(Mapsets.Select(x => x.Directory));
+
+            foreach (var dir in directories)
+            {
+                var dirName = new DirectoryInfo(dir).Name;
+                if (loadedDirNames.Contains(dirName)) 
+                    continue;
+
+                // Found a new folder! Load all .qua files inside.
+                var quaFiles = Directory.GetFiles(dir, "*.qua", SearchOption.AllDirectories);
+                if (quaFiles.Length > 0)
+                {
+                    try 
                     {
-                        newPaths.Add(dir);
+                        foreach (var quaPath in quaFiles)
+                        {
+                            var map = Map.FromQua(Qua.Parse(quaPath), quaPath);
+                            map.CalculateDifficulties();
+                            MapDatabaseCache.InsertMap(map); // Direct insert
+                        }
+                        loadedCount++;
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error($"SmartLoad Failed for {dirName}: {e.Message}", LogType.Runtime);
                     }
                 }
             }
-            catch (Exception e)
+
+            if (loadedCount > 0)
             {
-                Logger.Error($"Smart Refresh Error: {e.Message}", LogType.Runtime);
+                // Re-sort the list so the new map shows up
+                MapDatabaseCache.OrderAndSetMapsets(true);
+                return true;
             }
-            return newPaths;
+
+            return MapsetImporter.Queue.Count > 0;
         }
     }
 }
