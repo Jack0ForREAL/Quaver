@@ -10,46 +10,47 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        submodules: false
+        submodules: true # Changed to true to ensure everything is there
         ref: ${{ github.ref }}
 
     - name: Initialize Submodules
       run: |
         git submodule init
-        git config submodule.Quaver.Server.Client.update none
-        git submodule update --recursive || echo "Submodule update failed, continuing..."
+        git submodule update --recursive
 
     - name: Apply All Patches Automatically
       shell: pwsh
       run: |
         $patchDir = "BuildPatches"
-        $targetRoot = "Quaver.Shared"
+        # We search the whole directory now to be safe
+        $targetRoot = "." 
 
-        Write-Host "Starting Auto-Patcher..."
+        Write-Host "--- STARTING AUTO-PATCHER ---"
 
         if (Test-Path $patchDir) {
-            # Get all .cs files in your patches folder
             $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
+            Write-Host "Found $($patches.Count) patches in $patchDir"
 
             foreach ($patch in $patches) {
-                Write-Host "Searching for location of: $($patch.Name)"
+                Write-Host "Searching for: $($patch.Name)"
 
-                # Search the game folder for a file with the same name
-                $destination = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | Select-Object -First 1
+                # Search everywhere for the file to overwrite
+                $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | Where-Object { $_.FullName -notlike "*$patchDir*" }
 
-                if ($destination) {
-                    Write-Host "Found at: $($destination.FullName)"
-                    Write-Host "Overwriting..."
-                    Copy-Item -Path $patch.FullName -Destination $destination.FullName -Force
+                if ($destinations) {
+                    foreach ($dest in $destinations) {
+                        Write-Host "SUCCESS: Patching $($patch.Name) -> $($dest.FullName)"
+                        Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
+                    }
                 } else {
-                    Write-Host "::warning::Could not find an existing file named $($patch.Name) in the game code. If this is a NEW file, it was skipped."
+                    Write-Host "::error::FAILED: Could not find any file named $($patch.Name) in the repository!"
                 }
             }
         } else {
-             Write-Host "No BuildPatches folder found. Skipping."
+             Write-Host "::error::BuildPatches folder not found!"
         }
         
-        Write-Host "Patching complete."
+        Write-Host "--- PATCHING COMPLETE ---"
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
