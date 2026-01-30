@@ -293,21 +293,31 @@ namespace Quaver.Shared.Database.Maps
         private static void ShowFallbackMapDeletionDialog(string label, Action onYes) => DialogManager.Show(new YesNoDialog("Map Deletion", $"Failed to move the {label} in the recycle bin.\nWould you like to delete it instead?", onYes));
 
         // --- NEW FEATURE: QUICK REFRESH ---
+        /// <summary>
+        /// Scans the Songs directory and returns a list of full paths to mapset folders
+        /// that are NOT currently loaded in the database.
+        /// </summary>
         public static List<string> DetectNewMapsets()
         {
             var newPaths = new List<string>();
             try 
             {
                 var songDirectory = ConfigManager.SongDirectory.Value;
-                if (!Directory.Exists(songDirectory)) return newPaths;
+                
+                if (string.IsNullOrEmpty(songDirectory) || !Directory.Exists(songDirectory)) 
+                    return newPaths;
 
                 var directories = Directory.GetDirectories(songDirectory);
-                // Get set of currently loaded folder names
+                
+                // Create a HashSet of currently loaded directory names for O(1) lookups
                 var loadedMapsets = new HashSet<string>(Mapsets.Select(x => x.Directory));
 
                 foreach (var dir in directories)
                 {
+                    // Get the folder name (e.g., "123 Artist - Title")
                     var dirName = new DirectoryInfo(dir).Name;
+                    
+                    // If the database doesn't know about this folder, it's new
                     if (!loadedMapsets.Contains(dirName))
                     {
                         newPaths.Add(dir);
@@ -316,7 +326,7 @@ namespace Quaver.Shared.Database.Maps
             }
             catch (Exception e)
             {
-                Logger.Error($"Quick Refresh Error: {e.Message}", LogType.Runtime);
+                Logger.Error($"Smart Refresh Error: {e.Message}", LogType.Runtime);
             }
             return newPaths;
         }
