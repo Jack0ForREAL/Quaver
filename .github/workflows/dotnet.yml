@@ -10,31 +10,30 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        submodules: true # Changed to true to ensure everything is there
+        submodules: false # Changed back to FALSE to prevent crash
         ref: ${{ github.ref }}
 
-    - name: Initialize Submodules
+    - name: Initialize Submodules (Skip Broken Ones)
       run: |
         git submodule init
-        git submodule update --recursive
+        # This command stops it from trying to download the broken Server.Client repo
+        git config submodule.Quaver.Server.Client.update none
+        git submodule update --recursive || echo "Submodule update failed, continuing..."
 
     - name: Apply All Patches Automatically
       shell: pwsh
       run: |
         $patchDir = "BuildPatches"
-        # We search the whole directory now to be safe
         $targetRoot = "." 
 
         Write-Host "--- STARTING AUTO-PATCHER ---"
 
         if (Test-Path $patchDir) {
             $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
-            Write-Host "Found $($patches.Count) patches in $patchDir"
-
             foreach ($patch in $patches) {
                 Write-Host "Searching for: $($patch.Name)"
-
-                # Search everywhere for the file to overwrite
+                
+                # Search entire repo for the file (excluding the patch folder itself)
                 $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | Where-Object { $_.FullName -notlike "*$patchDir*" }
 
                 if ($destinations) {
@@ -43,7 +42,7 @@ jobs:
                         Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
                     }
                 } else {
-                    Write-Host "::error::FAILED: Could not find any file named $($patch.Name) in the repository!"
+                    Write-Host "::error::FAILED: Could not find any file named $($patch.Name) in the repo!"
                 }
             }
         } else {
@@ -57,7 +56,7 @@ jobs:
       with:
         dotnet-version: 6.0.x
 
-    - name: Fix Dependencies (Reference Patching)
+    - name: Fix Dependencies
       shell: pwsh
       run: |
         $proj = "Quaver.Shared/Quaver.Shared.csproj"
@@ -66,17 +65,15 @@ jobs:
             $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
             Set-Content $proj $content
         }
-        
         dotnet add Quaver.Shared/Quaver.Shared.csproj package TimeAgo
 
-    - name: Restore dependencies
-      run: dotnet restore Quaver/Quaver.csproj
+    - name: Restore and Build
+      run: |
+        dotnet restore Quaver/Quaver.csproj
+        dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
 
-    - name: Build and Publish
-      run: dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
-
-    - name: Upload Game Artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Quaver-Modded-Build
+        name: Quaver-Smart-Refresh-Mod
         path: ./QuaverMod
