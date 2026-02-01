@@ -135,7 +135,7 @@ namespace Quaver.Shared.Screens.Selection
             HandleKeyPressF2();
             HandleKeyPressF3();
             HandleKeyPressF4();
-            HandleKeyPressF5();  
+            HandleKeyPressF5();  // Handles Smart/Full Refresh
             HandleKeyPressEnter();
             HandleKeyPressControlInput();
             HandleThumb1MouseButtonClick();
@@ -148,27 +148,34 @@ namespace Quaver.Shared.Screens.Selection
         private void HandleKeyPressF3() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F3)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.MapPreview) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.MapPreview; }
         private void HandleKeyPressF4() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F4)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.UserProfile) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.UserProfile; }
         
+        // --- SMART REFRESH IMPLEMENTATION ---
         private void HandleKeyPressF5() 
         {
             if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return;
 
+            // Ctrl + F5 = Full Refresh (Slow, deletes DB)
             if (KeyboardManager.IsCtrlDown())
             {
                 DialogManager.Show(new RefreshDialog());
             }
             else
             {
+                // F5 = Smart Refresh (Scans for new Folders or Files)
                 NotificationManager.Show(NotificationLevel.Info, "Scanning for new maps...");
+                
                 ThreadScheduler.Run(() =>
                 {
+                    // FIXED: Using ReloadNewMapsets instead of DetectNewMapsets
                     var foundSomething = MapManager.ReloadNewMapsets();
                     
                     if (foundSomething)
                     {
+                        // Case 1: Archives were found (.osz), go to Import Screen
                         if (MapsetImporter.Queue.Count > 0)
                         {
                             Exit(() => new ImportingScreen(null, true, false)); 
                         }
+                        // Case 2: Only folders were found, just refresh UI
                         else
                         {
                             NotificationManager.Show(NotificationLevel.Success, "New maps loaded!");
@@ -375,7 +382,7 @@ namespace Quaver.Shared.Screens.Selection
             if (MapManager.Selected.Value == null) return;
             if (IsExportingMapset) { NotificationManager.Show(NotificationLevel.Warning, "Slow down! You must wait for your previous mapset to export"); return; }
             IsExportingMapset = true;
-            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLevel.Success, "Mapset successfully exported to your songs directory!"); });
+            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLev
         }
 
         private void SetRichPresence()
