@@ -149,35 +149,35 @@ namespace Quaver.Shared.Screens.Selection
         private void HandleKeyPressF4() { if (KeyboardManager.IsCtrlDown()) return; if (!KeyboardManager.IsUniqueKeyPress(Keys.F4)) return; if (ActiveLeftPanel.Value == SelectContainerPanel.UserProfile) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; else ActiveLeftPanel.Value = SelectContainerPanel.UserProfile; }
         
         // --- SMART REFRESH IMPLEMENTATION ---
-        private void HandleKeyPressF5() 
+        private void HandleKeyPressF5()
         {
-            if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return;
+            if (!KeyboardManager.IsUniqueKeyPress(Keys.F5))
+                return;
 
-            // Ctrl + F5 = Full Refresh (Slow, deletes DB)
             if (KeyboardManager.IsCtrlDown())
             {
+                // Ctrl + F5 = Full Refresh (Old Way)
                 DialogManager.Show(new RefreshDialog());
             }
             else
             {
-                // F5 = Smart Refresh (Scans for new Folders or Files)
-                NotificationManager.Show(NotificationLevel.Info, "Scanning for new maps...");
-                
+                // F5 = Smart Refresh (New Way)
+                NotificationManager.Show(NotificationLevel.Info, "Smart scanning for new maps...");
                 ThreadScheduler.Run(() =>
                 {
-                    // FIXED: Using ReloadNewMapsets instead of DetectNewMapsets
+                    // This calls the function in MapManager.cs
                     var foundSomething = MapManager.ReloadNewMapsets();
                     
                     if (foundSomething)
                     {
-                        // Case 1: Archives were found (.osz), go to Import Screen
                         if (MapsetImporter.Queue.Count > 0)
                         {
+                            // If .osz files found, go to Import Screen
                             Exit(() => new ImportingScreen(null, true, false)); 
                         }
-                        // Case 2: Only folders were found, just refresh UI
                         else
                         {
+                            // If just folders found, refresh list immediately
                             NotificationManager.Show(NotificationLevel.Success, "New maps loaded!");
                             lock (AvailableMapsets.Value) 
                                 AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery);
