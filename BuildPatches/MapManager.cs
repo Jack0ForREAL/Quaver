@@ -347,7 +347,6 @@ namespace Quaver.Shared.Database.Maps
 
             if (loadedCount > 0)
             {
-                // Re-sort the list so the new map shows up
                 MapDatabaseCache.OrderAndSetMapsets(true);
                 return true;
             }
