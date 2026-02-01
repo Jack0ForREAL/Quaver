@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Emik;
 using Microsoft.Xna.Framework.Graphics;
 using Quaver.API.Enums;
@@ -231,7 +232,8 @@ namespace Quaver.Shared.Database.Maps
             catch (Exception e) { Logger.Error(e, LogType.Runtime); }
             try { mapset.Maps.ForEach(MapDatabaseCache.RemoveMap); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
             Mapsets.Remove(mapset);
-            MapsetDeleted?.Invoke(typeof(typeof(MapManager)), new MapsetDeletedEventArgs(mapset, index));
+            // FIX IS HERE: Removing the double typeof
+            MapsetDeleted?.Invoke(typeof(MapManager), new MapsetDeletedEventArgs(mapset, index));
             lock (BackgroundHelper.MapsetBanners)
             {
                 if (!BackgroundHelper.MapsetBanners.ContainsKey(mapset.Directory)) return;
@@ -301,7 +303,7 @@ namespace Quaver.Shared.Database.Maps
             if (string.IsNullOrEmpty(songDir) || !Directory.Exists(songDir)) 
                 return false;
 
-            // 1. Check for Archives in the root (files to import)
+            // 1. Check for Archives (files to import via ImportingScreen)
             var files = Directory.GetFiles(songDir);
             foreach (var file in files)
             {
@@ -312,7 +314,7 @@ namespace Quaver.Shared.Database.Maps
                 }
             }
 
-            // 2. Check for Folders (Instant Load)
+            // 2. Check for New Folders (Instant Load)
             var directories = Directory.GetDirectories(songDir);
             var loadedDirNames = new HashSet<string>(Mapsets.Select(x => x.Directory));
 
@@ -322,6 +324,7 @@ namespace Quaver.Shared.Database.Maps
                 if (loadedDirNames.Contains(dirName)) 
                     continue;
 
+                // Found a new folder! Load all .qua files inside.
                 var quaFiles = Directory.GetFiles(dir, "*.qua", SearchOption.AllDirectories);
                 if (quaFiles.Length > 0)
                 {
@@ -331,7 +334,7 @@ namespace Quaver.Shared.Database.Maps
                         {
                             var map = Map.FromQua(Qua.Parse(quaPath), quaPath);
                             map.CalculateDifficulties();
-                            MapDatabaseCache.InsertMap(map);
+                            MapDatabaseCache.InsertMap(map); // Direct insert
                         }
                         loadedCount++;
                     }
@@ -344,6 +347,7 @@ namespace Quaver.Shared.Database.Maps
 
             if (loadedCount > 0)
             {
+                // Re-sort the list so the new map shows up
                 MapDatabaseCache.OrderAndSetMapsets(true);
                 return true;
             }
