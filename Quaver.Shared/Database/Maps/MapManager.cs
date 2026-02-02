@@ -572,6 +572,98 @@ namespace Quaver.Shared.Database.Maps
             SongRequestPlayed?.Invoke(typeof(MapManager), new SongRequestPlayedEventArgs(request, map));
         }
 
+        /// <summary>
+        ///     Scans for new mapsets (folders) or archives (osz/qp) and loads them.
+        ///     Returns true if any new content was found/loaded.
+        /// </summary>
+        /// <returns></returns>
+        public static bool ReloadNewMapsets()
+        {
+            var found = false;
+            var directory = ConfigManager.SongDirectory.Value;
+
+            // 1. Scan for archives to import
+            var files = Directory.GetFiles(directory, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(x => x.EndsWith(".osz") || x.EndsWith(".qp") || x.EndsWith(".smzip")).ToList();
+
+            foreach (var file in files)
+            {
+                if (!MapsetImporter.Queue.Contains(file))
+                {
+                    MapsetImporter.Queue.Add(file);
+                    found = true;
+                }
+            }
+
+            // 2. Scan for new directories (unloaded mapsets)
+            var directories = Directory.GetDirectories(directory);
+            
+            // Create a set of currently loaded directory names for fast lookup
+            // Note: This relies on Mapset.Directory matching the folder name
+            var loadedMapsets = new HashSet<string>();
+            lock (Mapsets)
+            {
+                foreach (var set in Mapsets)
+                    loadedMapsets.Add(set.Directory);
+            }
+
+            foreach (var dir in directories)
+            {
+                var dirName = new DirectoryInfo(dir).Name;
+
+                if (loadedMapsets.Contains(dirName))
+                    continue;
+
+                // Found a new directory - try to load it
+                try
+                {
+                    var mapset = new Mapset { Directory = dirName, Maps = new List<Map>() };
+                    var mapFiles = Directory.GetFiles(dir, "*.qua");
+
+                    foreach (var mapFile in mapFiles)
+                    {
+                        var map = Map.FromQua(Qua.Parse(mapFile), mapFile);
+                        map.Mapset = mapset;
+                        map.Directory = dirName;
+                        map.Path = Path.GetFileName(mapFile);
+                        map.CalculateDifficulties();
+                        
+                        // Important: Set the Artist/Title if not set on the mapset yet (from the first map)
+                        if (string.IsNullOrEmpty(mapset.Artist))
+                        {
+                            mapset.Artist = map.Artist;
+                            mapset.Title = map.Title;
+                            mapset.Creator = map.Creator;
+                            mapset.Source = map.Source;
+                        }
+
+                        mapset.Maps.Add(map);
+                    }
+
+                    if (mapset.Maps.Count > 0)
+                    {
+                        // Order maps by difficulty
+                        mapset.Maps = mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
+                        
+                        lock (Mapsets)
+                            Mapsets.Add(mapset);
+                        
+                        // Attempt to add to DB cache so it persists (swallow error if cache method doesn't exist in this version)
+                        try { MapDatabaseCache.AddMapset(mapset); } catch { }
+
+                        found = true;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);
+                    Logger.Error(e, LogType.Runtime);
+                }
+            }
+
+            return found;
+        }
+
         private static void ShowFallbackMapDeletionDialog(string label, Action onYes) =>
             DialogManager.Show(
                 new YesNoDialog(
