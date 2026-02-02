@@ -357,15 +357,8 @@ namespace Quaver.Shared.Database.Maps
                         map.Path = Path.GetFileName(mapFile);
                         map.CalculateDifficulties();
                         
-                        // Important: Set the Artist/Title if not set on the mapset yet (from the first map)
-                        if (string.IsNullOrEmpty(mapset.Artist))
-                        {
-                            mapset.Artist = map.Artist;
-                            mapset.Title = map.Title;
-                            mapset.Creator = map.Creator;
-                            mapset.Source = map.Source;
-                        }
-
+                        // Metadata is automatically derived from the maps in the list.
+                        // We do not set mapset.Artist/Title manually here.
                         mapset.Maps.Add(map);
                     }
 
@@ -376,9 +369,6 @@ namespace Quaver.Shared.Database.Maps
                         
                         lock (Mapsets)
                             Mapsets.Add(mapset);
-                        
-                        // Attempt to add to DB cache so it persists (swallow error if cache method doesn't exist in this version)
-                        try { MapDatabaseCache.AddMapset(mapset); } catch { }
 
                         found = true;
                     }
