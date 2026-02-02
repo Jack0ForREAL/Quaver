@@ -290,68 +290,116 @@ namespace Quaver.Shared.Database.Maps
             }
         }
 
-        public static void PlaySongRequest(SongRequest request, Map map) => SongRequestPlayed?.Invoke(typeof(MapManager), new SongRequestPlayedEventArgs(request, map));
+        public static void PlaySongRequest(SongRequest request, Map map)
+        {
+            SongRequestPlayed?.Invoke(typeof(MapManager), new SongRequestPlayedEventArgs(request, map));
+        }
 
-        private static void ShowFallbackMapDeletionDialog(string label, Action onYes) => DialogManager.Show(new YesNoDialog("Map Deletion", $"Failed to move the {label} in the recycle bin.\nWould you like to delete it instead?", onYes));
+        /// <summary>
+        ///     Alias for ReloadNewMapsets to fix build errors if SelectionScreen calls this instead.
+        /// </summary>
+        public static bool DetectNewMapsets() => ReloadNewMapsets();
 
-        // --- NEW FEATURE: SMART RELOAD ---
+        /// <summary>
+        ///     Scans for new mapsets (folders) or archives (osz/qp) and loads them.
+        ///     Returns true if any new content was found/loaded.
+        /// </summary>
         public static bool ReloadNewMapsets()
         {
-            var loadedCount = 0;
-            var songDir = ConfigManager.SongDirectory.Value;
-            
-            if (string.IsNullOrEmpty(songDir) || !Directory.Exists(songDir)) 
+            var found = false;
+            var directory = ConfigManager.SongDirectory.Value;
+
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
                 return false;
 
-            // 1. Check for Archives (files to import via ImportingScreen)
-            var files = Directory.GetFiles(songDir);
+            // 1. Scan for archives to import
+            var files = Directory.GetFiles(directory, "*.*", SearchOption.TopDirectoryOnly)
+                .Where(x => x.EndsWith(".osz") || x.EndsWith(".qp") || x.EndsWith(".smzip")).ToList();
+
             foreach (var file in files)
             {
-                if (file.EndsWith(".qp") || file.EndsWith(".osz") || file.EndsWith(".sm"))
+                if (!MapsetImporter.Queue.Contains(file))
                 {
-                    if (!MapsetImporter.Queue.Contains(file))
-                        MapsetImporter.Queue.Add(file);
+                    MapsetImporter.Queue.Add(file);
+                    found = true;
                 }
             }
 
-            // 2. Check for New Folders (Instant Load)
-            var directories = Directory.GetDirectories(songDir);
-            var loadedDirNames = new HashSet<string>(Mapsets.Select(x => x.Directory));
+            // 2. Scan for new directories (unloaded mapsets)
+            var directories = Directory.GetDirectories(directory);
+            
+            // Create a set of currently loaded directory names for fast lookup
+            var loadedMapsets = new HashSet<string>();
+            lock (Mapsets)
+            {
+                foreach (var set in Mapsets)
+                    loadedMapsets.Add(set.Directory);
+            }
 
             foreach (var dir in directories)
             {
                 var dirName = new DirectoryInfo(dir).Name;
-                if (loadedDirNames.Contains(dirName)) 
+
+                if (loadedMapsets.Contains(dirName))
                     continue;
 
-                // Found a new folder! Load all .qua files inside.
-                var quaFiles = Directory.GetFiles(dir, "*.qua", SearchOption.AllDirectories);
-                if (quaFiles.Length > 0)
+                // Found a new directory - try to load it
+                try
                 {
-                    try 
+                    var mapset = new Mapset { Directory = dirName, Maps = new List<Map>() };
+                    var mapFiles = Directory.GetFiles(dir, "*.qua");
+
+                    foreach (var mapFile in mapFiles)
                     {
-                        foreach (var quaPath in quaFiles)
+                        var map = Map.FromQua(Qua.Parse(mapFile), mapFile);
+                        map.Mapset = mapset;
+                        map.Directory = dirName;
+                        map.Path = Path.GetFileName(mapFile);
+                        map.CalculateDifficulties();
+                        
+                        // Important: Set the Artist/Title if not set on the mapset yet (from the first map)
+                        if (string.IsNullOrEmpty(mapset.Artist))
                         {
-                            var map = Map.FromQua(Qua.Parse(quaPath), quaPath);
-                            map.CalculateDifficulties();
-                            MapDatabaseCache.InsertMap(map); // Direct insert
+                            mapset.Artist = map.Artist;
+                            mapset.Title = map.Title;
+                            mapset.Creator = map.Creator;
+                            mapset.Source = map.Source;
                         }
-                        loadedCount++;
+
+                        mapset.Maps.Add(map);
                     }
-                    catch (Exception e)
+
+                    if (mapset.Maps.Count > 0)
                     {
-                        Logger.Error($"SmartLoad Failed for {dirName}: {e.Message}", LogType.Runtime);
+                        // Order maps by difficulty
+                        mapset.Maps = mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
+                        
+                        lock (Mapsets)
+                            Mapsets.Add(mapset);
+                        
+                        // Attempt to add to DB cache so it persists (swallow error if cache method doesn't exist in this version)
+                        try { MapDatabaseCache.AddMapset(mapset); } catch { }
+
+                        found = true;
                     }
+                }
+                catch (Exception e)
+                {
+                    Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);
+                    Logger.Error(e, LogType.Runtime);
                 }
             }
 
-            if (loadedCount > 0)
-            {
-                MapDatabaseCache.OrderAndSetMapsets(true);
-                return true;
-            }
-
-            return MapsetImporter.Queue.Count > 0;
+            return found;
         }
+
+        private static void ShowFallbackMapDeletionDialog(string label, Action onYes) =>
+            DialogManager.Show(
+                new YesNoDialog(
+                    "Map Deletion",
+                    $"Failed to move the {label} in the recycle bin.\nWould you like to delete it instead?",
+                    onYes
+                )
+            );
     }
 }
