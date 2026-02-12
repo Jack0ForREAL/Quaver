@@ -135,7 +135,7 @@ namespace Quaver.Shared.Screens.Selection
             HandleKeyPressF2();
             HandleKeyPressF3();
             HandleKeyPressF4();
-            HandleKeyPressF5();  // Handles Smart/Full Refresh
+            HandleKeyPressF5(); 
             HandleKeyPressEnter();
             HandleKeyPressControlInput();
             HandleThumb1MouseButtonClick();
@@ -381,7 +381,13 @@ namespace Quaver.Shared.Screens.Selection
             if (MapManager.Selected.Value == null) return;
             if (IsExportingMapset) { NotificationManager.Show(NotificationLevel.Warning, "Slow down! You must wait for your previous mapset to export"); return; }
             IsExportingMapset = true;
-            ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLev
+            ThreadScheduler.Run(() => 
+            {
+                NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); 
+                MapManager.Selected.Value.Mapset.ExportToZip(); 
+                IsExportingMapset = false; 
+                NotificationManager.Show(NotificationLevel.Success, $"Successfully exported {MapManager.Selected.Value.Mapset.Artist} - {MapManager.Selected.Value.Mapset.Title}!");
+            });
         }
 
         private void SetRichPresence()
