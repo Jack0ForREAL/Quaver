@@ -77,11 +77,13 @@ jobs:
 
     - name: Restore and Build
       run: |
-        # Force a clean build to remove any corrupted cache from previous runs
+        # Clean deletes the corrupted cache from previous runs
         dotnet clean Quaver/Quaver.csproj
+        
         dotnet restore Quaver/Quaver.csproj
-        # Added --no-incremental to absolutely guarantee a fresh compilation
-        dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained --no-incremental -o ./QuaverMod
+        
+        # We removed --no-incremental because it is not valid for 'publish'
+        dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
 
     - name: Upload
       uses: actions/upload-artifact@v4
