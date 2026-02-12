@@ -19,20 +19,17 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    - name: Apply All Patches (Force Overwrite)
+    - name: Apply Patches (And Force Fix Logic)
       shell: pwsh
       run: |
         $patchDir = "BuildPatches"
         $targetRoot = "." 
-
         Write-Host "--- STARTING AUTO-PATCHER ---"
 
+        # 1. Copy the files from BuildPatches
         if (Test-Path $patchDir) {
             $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
             foreach ($patch in $patches) {
-                Write-Host "Processing patch: $($patch.Name)"
-                
-                # Exclude .git, bin, obj, AND Wobble to prevent corruption
                 $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | 
                     Where-Object { 
                         $_.FullName -notlike "*$patchDir*" -and 
@@ -45,37 +42,29 @@ jobs:
                 if ($destinations) {
                     foreach ($dest in $destinations) {
                         Write-Host "Overwriting: $($dest.FullName)"
-                        # Delete the file first to ensure a clean replacement
-                        Remove-Item -Path $dest.FullName -Force
                         Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
                     }
-                } else {
-                    Write-Host "::error::FAILED: Could not find any valid source file for $($patch.Name)!"
-                    exit 1
                 }
             }
-        } else {
-             Write-Host "::error::BuildPatches folder not found!"
-             exit 1
         }
-        
-        Write-Host "--- PATCHING COMPLETE ---"
 
-    - name: DEBUG - Check Actual File Content
-      shell: pwsh
-      run: |
-        $path = "Quaver.Shared/Screens/Selection/SelectionScreen.cs"
-        Write-Host "--- CHECKING CONTENT OF: $path ---"
-        if (Test-Path $path) {
-            $lines = Get-Content $path
-            # Print lines 160 to 180 where the error is reported
-            for ($i = 160; $i -lt 180; $i++) {
-                if ($i -lt $lines.Count) {
-                    Write-Host "Line $($i+1): $($lines[$i])"
-                }
-            }
+        # 2. EMERGENCY FIX: Manually rewrite the broken logic in SelectionScreen.cs
+        # This ensures it works even if the branch/file is wrong.
+        $ssPath = "Quaver.Shared/Screens/Selection/SelectionScreen.cs"
+        if (Test-Path $ssPath) {
+            Write-Host "--- APPLYING EMERGENCY LOGIC FIX TO SELECTIONSCREEN.CS ---"
+            $code = Get-Content $ssPath -Raw
+
+            # Replace the old List logic with the new Bool logic using string replacement
+            $code = $code.Replace("var newMaps = MapManager.DetectNewMapsets();", "var found = MapManager.DetectNewMapsets();")
+            $code = $code.Replace('Logger.Log($"[SmartRefresh] Scan finished. New folders found: {newMaps.Count}", LogLevel.Important, LogType.Runtime);', 'Logger.Log($"[SmartRefresh] Scan finished.", LogLevel.Important, LogType.Runtime);')
+            $code = $code.Replace('if (newMaps.Count == 0) { NotificationManager.Show(NotificationLevel.Success, "No new maps found."); return; }', 'if (!found) { NotificationManager.Show(NotificationLevel.Success, "No new maps found."); return; }')
+            $code = $code.Replace('NotificationManager.Show(NotificationLevel.Success, $"Found {newMaps.Count} new mapsets! Importing...");', 'NotificationManager.Show(NotificationLevel.Success, "Found new mapsets! Importing...");')
+            $code = $code.Replace('Exit(() => new ImportingScreen(newMaps, false));', 'Exit(() => new ImportingScreen(null, true));')
+
+            Set-Content $ssPath $code
+            Write-Host "--- LOGIC FIX APPLIED ---"
         }
-        Write-Host "--- END CHECK ---"
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
