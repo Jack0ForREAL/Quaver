@@ -10,13 +10,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        submodules: false # Changed back to FALSE to prevent crash
+        submodules: false
         ref: ${{ github.ref }}
 
-    - name: Initialize Submodules (Skip Broken Ones)
+    - name: Initialize Submodules
       run: |
         git submodule init
-        # This command stops it from trying to download the broken Server.Client repo
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
@@ -31,16 +30,16 @@ jobs:
         if (Test-Path $patchDir) {
             $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
             foreach ($patch in $patches) {
-                Write-Host "Searching for destination for: $($patch.Name)"
+                Write-Host "Processing patch: $($patch.Name)"
                 
-                # Search recursively but EXCLUDE specific folders that cause issues
+                # Exclude .git, bin, obj, AND Wobble to prevent corruption
                 $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | 
                     Where-Object { 
                         $_.FullName -notlike "*$patchDir*" -and 
                         $_.FullName -notlike "*\.git\*" -and 
-                        $_.FullName -notlike "*\Wobble\*" -and 
+                        $_.FullName -notlike "*\bin\*" -and 
                         $_.FullName -notlike "*\obj\*" -and
-                        $_.FullName -notlike "*\bin\*"
+                        $_.FullName -notlike "*\Wobble\*" 
                     }
 
                 if ($destinations) {
@@ -78,8 +77,11 @@ jobs:
 
     - name: Restore and Build
       run: |
+        # Force a clean build to remove any corrupted cache from previous runs
+        dotnet clean Quaver/Quaver.csproj
         dotnet restore Quaver/Quaver.csproj
-        dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
+        # Added --no-incremental to absolutely guarantee a fresh compilation
+        dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained --no-incremental -o ./QuaverMod
 
     - name: Upload
       uses: actions/upload-artifact@v4
