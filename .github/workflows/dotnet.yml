@@ -1,6 +1,8 @@
 name: Build Quaver Mod
 
 on:
+  push:
+    branches: [ develop, master, main ]
   workflow_dispatch:
 
 jobs:
@@ -10,79 +12,46 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        submodules: false # Changed back to FALSE to prevent crash
-        ref: ${{ github.ref }}
+        submodules: false
 
-    - name: Initialize Submodules (Skip Broken Ones)
+    - name: Initialize Submodules (Skip Private)
       run: |
         git submodule init
-        # This command stops it from trying to download the broken Server.Client repo
         git config submodule.Quaver.Server.Client.update none
-        git submodule update --recursive || echo "Submodule update failed, continuing..."
-
-    - name: Apply All Patches Automatically
-      shell: pwsh
-      run: |
-        $patchDir = "BuildPatches"
-        $targetRoot = "." 
-
-        Write-Host "--- STARTING AUTO-PATCHER ---"
-
-        if (Test-Path $patchDir) {
-            $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
-            foreach ($patch in $patches) {
-                Write-Host "Searching for destination for: $($patch.Name)"
-                
-                # Search recursively but EXCLUDE specific folders that cause issues
-                $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | 
-                    Where-Object { 
-                        $_.FullName -notlike "*$patchDir*" -and 
-                        $_.FullName -notlike "*\.git\*" -and 
-                        $_.FullName -notlike "*\Wobble\*" -and 
-                        $_.FullName -notlike "*\obj\*" -and
-                        $_.FullName -notlike "*\bin\*"
-                    }
-
-                if ($destinations) {
-                    foreach ($dest in $destinations) {
-                        Write-Host "SUCCESS: Patching $($patch.Name) -> $($dest.FullName)"
-                        Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
-                    }
-                } else {
-                    Write-Host "::error::FAILED: Could not find any valid source file for $($patch.Name)!"
-                    exit 1
-                }
-            }
-        } else {
-             Write-Host "::error::BuildPatches folder not found!"
-             exit 1
-        }
-        
-        Write-Host "--- PATCHING COMPLETE ---"
+        git submodule update --recursive
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 6.0.x
 
-    - name: Fix Dependencies
+    - name: Fix Dependencies (PowerShell)
       shell: pwsh
       run: |
+        # 1. Define the path to the shared project file
         $proj = "Quaver.Shared/Quaver.Shared.csproj"
-        if (Test-Path $proj) {
-            $content = Get-Content $proj -Raw
-            $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
-            Set-Content $proj $content
-        }
+        
+        # 2. Read the file content
+        $content = Get-Content $proj -Raw
+        
+        # 3. SWAP THE LINK: Replace the missing Project Reference with the existing DLL Reference
+        # This Regex looks for the line including the Server.Client.csproj and replaces it
+        $content = $content -replace '<ProjectReference Include=".*Quaver\.Server\.Client\.csproj" />', '<Reference Include="Quaver.Server.Client"><HintPath>Quaver.Server.Client.dll</HintPath></Reference>'
+        
+        # 4. Save the fixed file
+        Set-Content $proj $content
+        
+        # 5. Force install the missing TimeAgo library just in case
         dotnet add Quaver.Shared/Quaver.Shared.csproj package TimeAgo
 
-    - name: Restore and Build
-      run: |
-        dotnet restore Quaver/Quaver.csproj
-        dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
+    - name: Restore dependencies
+      run: dotnet restore Quaver/Quaver.csproj
 
-    - name: Upload
+    - name: Build and Publish
+      run: dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
+
+    - name: Upload Game Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Quaver-Smart-Refresh-Mod
+        name: Quaver-Video-Mod
         path: ./QuaverMod
