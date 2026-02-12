@@ -165,15 +165,15 @@ namespace Quaver.Shared.Screens.Selection
             
             ThreadScheduler.Run(() =>
             {
-                // Call the function we fixed in MapManager
-                var found = MapManager.ReloadNewMapsets();
+                // DETECTED FIX: This now returns bool, so we store it in 'found'
+                var found = MapManager.DetectNewMapsets();
                 
                 if (found)
                 {
-                    // Case 1: Archives were found (.osz), go to Import Screen
+                    // Case 1: Archives were found (.osz) in the Queue
                     if (MapsetImporter.Queue.Count > 0)
                     {
-                        // FIXED: Correct constructor for ImportingScreen (files, autoImport)
+                        // Pass null for files, true for auto-import (standard Quaver logic)
                         Exit(() => new ImportingScreen(null, true)); 
                         return;
                     }
