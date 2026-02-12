@@ -19,7 +19,7 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    - name: Apply All Patches Automatically
+    - name: Apply All Patches (Force Overwrite)
       shell: pwsh
       run: |
         $patchDir = "BuildPatches"
@@ -44,7 +44,9 @@ jobs:
 
                 if ($destinations) {
                     foreach ($dest in $destinations) {
-                        Write-Host "SUCCESS: Patching $($patch.Name) -> $($dest.FullName)"
+                        Write-Host "Overwriting: $($dest.FullName)"
+                        # Delete the file first to ensure a clean replacement
+                        Remove-Item -Path $dest.FullName -Force
                         Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
                     }
                 } else {
@@ -58,6 +60,22 @@ jobs:
         }
         
         Write-Host "--- PATCHING COMPLETE ---"
+
+    - name: DEBUG - Check Actual File Content
+      shell: pwsh
+      run: |
+        $path = "Quaver.Shared/Screens/Selection/SelectionScreen.cs"
+        Write-Host "--- CHECKING CONTENT OF: $path ---"
+        if (Test-Path $path) {
+            $lines = Get-Content $path
+            # Print lines 160 to 180 where the error is reported
+            for ($i = 160; $i -lt 180; $i++) {
+                if ($i -lt $lines.Count) {
+                    Write-Host "Line $($i+1): $($lines[$i])"
+                }
+            }
+        }
+        Write-Host "--- END CHECK ---"
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
@@ -77,12 +95,8 @@ jobs:
 
     - name: Restore and Build
       run: |
-        # Clean deletes the corrupted cache from previous runs
         dotnet clean Quaver/Quaver.csproj
-        
         dotnet restore Quaver/Quaver.csproj
-        
-        # We removed --no-incremental because it is not valid for 'publish'
         dotnet publish Quaver/Quaver.csproj -c Release -r win-x64 --no-self-contained -o ./QuaverMod
 
     - name: Upload
