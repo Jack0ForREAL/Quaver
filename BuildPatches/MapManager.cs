@@ -296,14 +296,10 @@ namespace Quaver.Shared.Database.Maps
         }
 
         /// <summary>
-        ///     Alias for ReloadNewMapsets to fix build errors if SelectionScreen calls this instead.
+        ///     Alias to prevent errors if SelectionScreen calls DetectNewMapsets
         /// </summary>
         public static bool DetectNewMapsets() => ReloadNewMapsets();
 
-        /// <summary>
-        ///     Scans for new mapsets (folders) or archives (osz/qp) and loads them.
-        ///     Returns true if any new content was found/loaded.
-        /// </summary>
         public static bool ReloadNewMapsets()
         {
             var found = false;
@@ -343,7 +339,6 @@ namespace Quaver.Shared.Database.Maps
                 if (loadedMapsets.Contains(dirName))
                     continue;
 
-                // Found a new directory - try to load it
                 try
                 {
                     var mapset = new Mapset { Directory = dirName, Maps = new List<Map>() };
@@ -356,15 +351,12 @@ namespace Quaver.Shared.Database.Maps
                         map.Directory = dirName;
                         map.Path = Path.GetFileName(mapFile);
                         map.CalculateDifficulties();
-                        
-                        // Metadata is automatically derived from the maps in the list.
-                        // We do not set mapset.Artist/Title manually here.
+                        // Metadata (Artist/Title) is automatically handled by the Map object
                         mapset.Maps.Add(map);
                     }
 
                     if (mapset.Maps.Count > 0)
                     {
-                        // Order maps by difficulty
                         mapset.Maps = mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
                         
                         lock (Mapsets)
@@ -376,7 +368,6 @@ namespace Quaver.Shared.Database.Maps
                 catch (Exception e)
                 {
                     Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);
-                    Logger.Error(e, LogType.Runtime);
                 }
             }
 
