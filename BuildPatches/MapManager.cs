@@ -232,7 +232,6 @@ namespace Quaver.Shared.Database.Maps
             catch (Exception e) { Logger.Error(e, LogType.Runtime); }
             try { mapset.Maps.ForEach(MapDatabaseCache.RemoveMap); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
             Mapsets.Remove(mapset);
-            // FIX IS HERE: Removing the double typeof
             MapsetDeleted?.Invoke(typeof(MapManager), new MapsetDeletedEventArgs(mapset, index));
             lock (BackgroundHelper.MapsetBanners)
             {
@@ -295,9 +294,6 @@ namespace Quaver.Shared.Database.Maps
             SongRequestPlayed?.Invoke(typeof(MapManager), new SongRequestPlayedEventArgs(request, map));
         }
 
-        /// <summary>
-        ///     Alias to prevent errors if SelectionScreen calls DetectNewMapsets
-        /// </summary>
         public static bool DetectNewMapsets() => ReloadNewMapsets();
 
         public static bool ReloadNewMapsets()
