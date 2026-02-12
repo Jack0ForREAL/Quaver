@@ -31,10 +31,17 @@ jobs:
         if (Test-Path $patchDir) {
             $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs"
             foreach ($patch in $patches) {
-                Write-Host "Searching for: $($patch.Name)"
+                Write-Host "Searching for destination for: $($patch.Name)"
                 
-                # Search entire repo for the file (excluding the patch folder itself)
-                $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | Where-Object { $_.FullName -notlike "*$patchDir*" }
+                # Search recursively but EXCLUDE specific folders that cause issues
+                $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | 
+                    Where-Object { 
+                        $_.FullName -notlike "*$patchDir*" -and 
+                        $_.FullName -notlike "*\.git\*" -and 
+                        $_.FullName -notlike "*\Wobble\*" -and 
+                        $_.FullName -notlike "*\obj\*" -and
+                        $_.FullName -notlike "*\bin\*"
+                    }
 
                 if ($destinations) {
                     foreach ($dest in $destinations) {
@@ -42,11 +49,13 @@ jobs:
                         Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
                     }
                 } else {
-                    Write-Host "::error::FAILED: Could not find any file named $($patch.Name) in the repo!"
+                    Write-Host "::error::FAILED: Could not find any valid source file for $($patch.Name)!"
+                    exit 1
                 }
             }
         } else {
              Write-Host "::error::BuildPatches folder not found!"
+             exit 1
         }
         
         Write-Host "--- PATCHING COMPLETE ---"
