@@ -19,428 +19,12 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    - name: Apply Standard Patches
+    - name: Force Write Patched Files
       shell: pwsh
       run: |
-        $patchDir = "BuildPatches"
-        $targetRoot = "." 
-        Write-Host "--- APPLYING BASIC PATCHES ---"
-        if (Test-Path $patchDir) {
-            # Patch everything EXCEPT SelectionScreen and MapManager (we will force write those next)
-            $patches = Get-ChildItem -Path $patchDir -File -Recurse -Filter "*.cs" | Where-Object { $_.Name -ne "SelectionScreen.cs" -and $_.Name -ne "MapManager.cs" }
-            foreach ($patch in $patches) {
-                $destinations = Get-ChildItem -Path $targetRoot -Recurse -Filter $patch.Name -File | 
-                    Where-Object { 
-                        $_.FullName -notlike "*$patchDir*" -and $_.FullName -notlike "*\.git\*" -and $_.FullName -notlike "*\bin\*" -and $_.FullName -notlike "*\obj\*" -and $_.FullName -notlike "*\Wobble\*" 
-                    }
-                if ($destinations) {
-                    foreach ($dest in $destinations) {
-                        Write-Host "Overwriting: $($dest.FullName)"
-                        Copy-Item -Path $patch.FullName -Destination $dest.FullName -Force
-                    }
-                }
-            }
-        }
-
-    - name: FORCE WRITE MapManager.cs
-      shell: pwsh
-      run: |
-        $path = "Quaver.Shared/Database/Maps/MapManager.cs"
-        Write-Host "--- FORCE WRITING CORRECT CODE TO: $path ---"
-        $code = @'
-        /*
-         * This Source Code Form is subject to the terms of the Mozilla Public
-         * License, v. 2.0. If a copy of the MPL was not distributed with this
-         * file, You can obtain one at http://mozilla.org/MPL/2.0/.
-         * Copyright (c) Swan & The Quaver Team <support@quavergame.com>.
-        */
-
-        using System;
-        using System.Collections.Generic;
-        using System.IO;
-        using System.Linq;
-        using System.Threading.Tasks;
-        using Emik;
-        using Microsoft.Xna.Framework.Graphics;
-        using Quaver.API.Enums;
-        using Quaver.API.Maps;
-        using Quaver.API.Maps.Parsers;
-        using Quaver.Server.Client;
-        using Quaver.Server.Client.Objects.Twitch;
-        using Quaver.Shared.Assets;
-        using Quaver.Shared.Audio;
-        using Quaver.Shared.Config;
-        using Quaver.Shared.Database.Playlists;
-        using Quaver.Shared.Graphics;
-        using Quaver.Shared.Graphics.Backgrounds;
-        using Quaver.Shared.Graphics.Notifications;
-        using Quaver.Shared.Helpers;
-        using Quaver.Shared.Modifiers;
-        using Quaver.Shared.Online.API.Maps;
-        using Quaver.Shared.Screens.Selection.UI.Maps;
-        using RestSharp;
-        using RestSharp.Extensions;
-        using Wobble.Audio.Tracks;
-        using Wobble.Bindables;
-        using Wobble.Graphics.UI.Dialogs;
-        using Wobble.Logging;
-
-        namespace Quaver.Shared.Database.Maps
-        {
-            public static class MapManager
-            {
-                public static Bindable<Map> Selected { get; set; } = new Bindable<Map>(null);
-                public static List<Mapset> Mapsets { get; set; } = new List<Mapset>();
-                public static List<Map> RecentlyPlayed { get; set; } = new List<Map>();
-                public static string OsuSongsFolder { get; set; }
-                public static string CurrentAudioPath => GetAudioPath(Selected?.Value);
-                public static Texture2D CurrentBackground { get; set; }
-                public static string CurrentBackgroundPath => GetBackgroundPath(Selected.Value);
-
-                public static event EventHandler<MapsetDeletedEventArgs> MapsetDeleted;
-                public static event EventHandler<MapDeletedEventArgs> MapDeleted;
-                public static event EventHandler<MapUpdatedEventArgs> MapUpdated;
-                public static event EventHandler<SongRequestPlayedEventArgs> SongRequestPlayed;
-
-                public static void SelectMapFromMapset(Mapset mapset)
-                {
-                    Map Select(List<Map> maps, ModIdentifier mods)
-                    {
-                        if (maps.Count == 0) return null;
-                        var minDelta = Double.PositiveInfinity;
-                        Map selection = null;
-                        foreach (var map in maps)
-                        {
-                            var target = ConfigManager.PrioritizedMapDifficulty[map.Mode].Value / 10d;
-                            double delta = Math.Abs(map.DifficultyFromMods(mods) - target);
-                            if (delta < minDelta)
-                            {
-                                selection = map;
-                                minDelta = delta;
-                            }
-                        }
-                        return selection;
-                    }
-                    List<Map> prioritized = mapset.Maps.FindAll(x => x.Mode == ConfigManager.PrioritizedGameMode.Value);
-                    Selected.Value = Select(prioritized, ModManager.Mods) ?? Select(mapset.Maps, ModManager.Mods);
-                }
-
-                public static string GetBackgroundPath(Map map)
-                {
-                    if (map == null) return "";
-                    switch (map.Game)
-                    {
-                        case MapGame.Osu:
-                            var osu = new OsuBeatmap(OsuSongsFolder + map.Directory + "/" + map.Path);
-                            return $@"{OsuSongsFolder}/{map.Directory}/{osu.Background}";
-                        case MapGame.Quaver:
-                            return ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.BackgroundPath;
-                        case MapGame.Etterna:
-                            return map.BackgroundPath;
-                        default:
-                            return "";
-                    }
-                }
-
-                public static string GetBannerPath(Map map)
-                {
-                    if (map == null) return "";
-                    switch (map.Game)
-                    {
-                        case MapGame.Osu: return "";
-                        case MapGame.Quaver: return ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.BannerPath;
-                        case MapGame.Etterna: return map.BannerPath;
-                        default: return "";
-                    }
-                }
-
-                public static string GetMapsetBannerPath(Mapset mapset)
-                {
-                    var map = mapset.Maps.First();
-                    switch (map.Game)
-                    {
-                        case MapGame.Osu: return "";
-                        case MapGame.Quaver: return (ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.BannerPath).Replace("\\", "/");
-                        case MapGame.Etterna: return map.BannerPath;
-                        default: return "";
-                    }
-                }
-
-                public static string GetAudioPath(Map map)
-                {
-                    if (map == null) return "";
-                    switch (map.Game)
-                    {
-                        case MapGame.Osu: return OsuSongsFolder + "/" + map.Directory + "/" + map.AudioPath;
-                        case MapGame.Quaver: return ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.AudioPath;
-                        case MapGame.Etterna: return map.AudioPath;
-                        default: return "";
-                    }
-                }
-
-                public static Map FindMapFromMd5(string md5)
-                {
-                    foreach (var set in Mapsets)
-                    {
-                        var found = set.Maps.Find(x => x.Md5Checksum == md5);
-                        if (found != null) return found;
-                    }
-                    return null;
-                }
-
-                public static Map FindMapFromOnlineId(int id)
-                {
-                    foreach (var set in Mapsets)
-                    {
-                        var found = set.Maps.Find(x => x.MapId == id);
-                        if (found != null) return found;
-                    }
-                    return null;
-                }
-
-                public static string GetCustomAudioSamplePath(Map map, string samplePath)
-                {
-                    switch (map.Game)
-                    {
-                        case MapGame.Osu: return OsuSongsFolder + "/" + map.Directory + "/" + samplePath;
-                        case MapGame.Quaver: return ConfigManager.SongDirectory + "/" + map.Directory + "/" + samplePath;
-                        default: return "";
-                    }
-                }
-
-                public static void ViewOnlineListing(Map map = null)
-                {
-                    if (map == null) map = Selected.Value;
-                    if (map == null) return;
-                    if (map.MapId == -1) { NotificationManager.Show(NotificationLevel.Error, "This map is not submitted online!"); return; }
-                    BrowserHelper.OpenURL($"https://quavergame.com/mapsets/map/{map.MapId}");
-                }
-
-                public static void Delete(Map map, int index)
-                {
-                    if (map.Game != MapGame.Quaver) { NotificationManager.Show(NotificationLevel.Error, "You cannot delete a map loaded from another game"); return; }
-                    try
-                    {
-                        var mapsetPath = Path.Combine(ConfigManager.SongDirectory.Value, map.Mapset.Directory);
-                        var path = Path.Combine(mapsetPath, map.Path);
-                        if (Rubbish.Move(path)) MapDatabaseCache.RemoveMap(map);
-                        else
-                        {
-                            ShowFallbackMapDeletionDialog("map", () =>
-                            {
-                                try { File.Delete(path); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
-                                if (File.Exists(path)) { NotificationManager.Show(NotificationLevel.Error, "Unable to delete the map. Is the file protected?"); return; }
-                                MapDatabaseCache.RemoveMap(map);
-                                map.Mapset.Maps.Remove(map);
-                                if (map.Mapset.Maps.Count == 0) Mapsets.Remove(map.Mapset);
-                                PlaylistManager.RemoveMapFromAllPlaylists(map);
-                                MapDeleted?.Invoke(typeof(MapManager), new MapDeletedEventArgs(map, index));
-                            });
-                            return;
-                        }
-                    }
-                    catch (Exception e) { Logger.Error(e, LogType.Runtime); }
-                    map.Mapset.Maps.Remove(map);
-                    if (map.Mapset.Maps.Count == 0) Mapsets.Remove(map.Mapset);
-                    PlaylistManager.RemoveMapFromAllPlaylists(map);
-                    MapDeleted?.Invoke(typeof(MapManager), new MapDeletedEventArgs(map, index));
-                }
-
-                public static void Delete(Mapset mapset, int index)
-                {
-                    if (mapset.Maps.Count == 0) return;
-                    if (mapset.Maps.First().Game != MapGame.Quaver) { NotificationManager.Show(NotificationLevel.Error, "You cannot delete a mapset loaded from another game"); return; }
-                    if (mapset.Maps.Contains(Selected.Value))
-                    {
-                        var oldTrack = AudioEngine.Track;
-                        AudioEngine.Track = new AudioTrackVirtual(300000);
-                        if (oldTrack != null && !oldTrack.IsDisposed) oldTrack.Dispose();
-                    }
-                    try
-                    {
-                        var directory = Path.Combine(ConfigManager.SongDirectory.Value, mapset.Directory);
-                        if (!Rubbish.Move(directory) && Directory.Exists(directory))
-                        {
-                            ShowFallbackMapDeletionDialog("mapset", () =>
-                            {
-                                try { Directory.Delete(directory, true); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
-                                if (Directory.Exists(directory)) { NotificationManager.Show(NotificationLevel.Error, "Unable to delete the mapset. Is the directory protected?"); return; }
-                                try { mapset.Maps.ForEach(MapDatabaseCache.RemoveMap); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
-                                Mapsets.Remove(mapset);
-                                MapsetDeleted?.Invoke(typeof(MapManager), new MapsetDeletedEventArgs(mapset, index));
-                                lock (BackgroundHelper.MapsetBanners)
-                                {
-                                    if (!BackgroundHelper.MapsetBanners.ContainsKey(mapset.Directory)) return;
-                                    var banner = BackgroundHelper.MapsetBanners[mapset.Directory];
-                                    if (banner != UserInterface.DefaultBanner) banner.Dispose();
-                                    BackgroundHelper.MapsetBanners.Remove(mapset.Directory);
-                                }
-                            });
-                            return;
-                        }
-                    }
-                    catch (Exception e) { Logger.Error(e, LogType.Runtime); }
-                    try { mapset.Maps.ForEach(MapDatabaseCache.RemoveMap); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
-                    Mapsets.Remove(mapset);
-                    MapsetDeleted?.Invoke(typeof(MapManager), new MapsetDeletedEventArgs(mapset, index));
-                    lock (BackgroundHelper.MapsetBanners)
-                    {
-                        if (!BackgroundHelper.MapsetBanners.ContainsKey(mapset.Directory)) return;
-                        var banner = BackgroundHelper.MapsetBanners[mapset.Directory];
-                        if (banner != UserInterface.DefaultBanner) banner.Dispose();
-                        BackgroundHelper.MapsetBanners.Remove(mapset.Directory);
-                    }
-                }
-
-                public static void UpdateMapToLatestVersion(Map outdated)
-                {
-                    try
-                    {
-                        var lookup = new APIRequestMapInformation(outdated.MapId).ExecuteRequest();
-                        if (lookup.Status != 200) throw new Exception($"Map updated failed. APIRequestMapInformation failed with status: {lookup.Status}");
-                        foreach (var mapset in Mapsets)
-                        {
-                            var foundMap = mapset.Maps.Find(x => x.Md5Checksum == lookup.Map.Md5);
-                            if (foundMap == null) continue;
-                            outdated.Mapset.Maps.Remove(outdated);
-                            MapDatabaseCache.RemoveMap(outdated);
-                            if (outdated.Mapset.Maps.Count == 0) Mapsets.Remove(outdated.Mapset);
-                            if (Selected.Value == outdated) Selected.Value = foundMap;
-                            PlaylistManager.UpdateMapInPlaylists(outdated, foundMap);
-                            MapUpdated?.Invoke(typeof(MapManager), new MapUpdatedEventArgs(outdated, foundMap));
-                            return;
-                        }
-                        var path = $"{ConfigManager.SongDirectory.Value}/{outdated.Directory}/{outdated.Path}";
-                        Logger.Important($"Downloading latest version of map: {outdated.Id}", LogType.Runtime);
-                        var client = new RestClient($"{OnlineClient.API_ENDPOINT}");
-                        client.DownloadData(new RestRequest($"{OnlineClient.API_ENDPOINT}/d/web/map/{outdated.MapId}", Method.GET)).SaveAs(path);
-                        Logger.Important($"Successfully downloaded latest version of map: {outdated.Id}", LogType.Runtime);
-                        var newMap = Map.FromQua(Qua.Parse(path), path);
-                        newMap.CalculateDifficulties();
-                        newMap.Id = outdated.Id;
-                        newMap.Mapset = outdated.Mapset;
-                        newMap.Directory = outdated.Directory;
-                        newMap.Path = outdated.Path;
-                        newMap.DateAdded = outdated.DateAdded;
-                        newMap.TimesPlayed = outdated.TimesPlayed;
-                        newMap.LocalOffset = outdated.LocalOffset;
-                        MapDatabaseCache.UpdateMap(outdated);
-                        outdated.Mapset.Maps.Remove(outdated);
-                        outdated.Mapset.Maps.Add(newMap);
-                        outdated.Mapset.Maps = newMap.Mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
-                        if (Selected.Value == outdated) Selected.Value = newMap;
-                        PlaylistManager.UpdateMapInPlaylists(outdated, newMap);
-                        MapUpdated?.Invoke(typeof(MapManager), new MapUpdatedEventArgs(outdated, newMap));
-                    }
-                    catch (Exception e)
-                    {
-                        Logger.Error(e, LogType.Runtime);
-                        MapUpdated?.Invoke(typeof(MapManager), new MapUpdatedEventArgs(outdated, outdated));
-                    }
-                }
-
-                public static void PlaySongRequest(SongRequest request, Map map)
-                {
-                    SongRequestPlayed?.Invoke(typeof(MapManager), new SongRequestPlayedEventArgs(request, map));
-                }
-
-                /// <summary>
-                ///     Alias to prevent errors if SelectionScreen calls DetectNewMapsets
-                /// </summary>
-                public static bool DetectNewMapsets() => ReloadNewMapsets();
-
-                public static bool ReloadNewMapsets()
-                {
-                    var found = false;
-                    var directory = ConfigManager.SongDirectory.Value;
-
-                    if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
-                        return false;
-
-                    // 1. Scan for archives to import
-                    var files = Directory.GetFiles(directory, "*.*", SearchOption.TopDirectoryOnly)
-                        .Where(x => x.EndsWith(".osz") || x.EndsWith(".qp") || x.EndsWith(".smzip")).ToList();
-
-                    foreach (var file in files)
-                    {
-                        if (!MapsetImporter.Queue.Contains(file))
-                        {
-                            MapsetImporter.Queue.Add(file);
-                            found = true;
-                        }
-                    }
-
-                    // 2. Scan for new directories (unloaded mapsets)
-                    var directories = Directory.GetDirectories(directory);
-                    
-                    // Create a set of currently loaded directory names for fast lookup
-                    var loadedMapsets = new HashSet<string>();
-                    lock (Mapsets)
-                    {
-                        foreach (var set in Mapsets)
-                            loadedMapsets.Add(set.Directory);
-                    }
-
-                    foreach (var dir in directories)
-                    {
-                        var dirName = new DirectoryInfo(dir).Name;
-
-                        if (loadedMapsets.Contains(dirName))
-                            continue;
-
-                        try
-                        {
-                            var mapset = new Mapset { Directory = dirName, Maps = new List<Map>() };
-                            var mapFiles = Directory.GetFiles(dir, "*.qua");
-
-                            foreach (var mapFile in mapFiles)
-                            {
-                                var map = Map.FromQua(Qua.Parse(mapFile), mapFile);
-                                map.Mapset = mapset;
-                                map.Directory = dirName;
-                                map.Path = Path.GetFileName(mapFile);
-                                map.CalculateDifficulties();
-                                // Metadata (Artist/Title) is automatically handled by the Map object
-                                mapset.Maps.Add(map);
-                            }
-
-                            if (mapset.Maps.Count > 0)
-                            {
-                                mapset.Maps = mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
-                                
-                                lock (Mapsets)
-                                    Mapsets.Add(mapset);
-
-                                found = true;
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);
-                        }
-                    }
-
-                    return found;
-                }
-
-                private static void ShowFallbackMapDeletionDialog(string label, Action onYes) =>
-                    DialogManager.Show(
-                        new YesNoDialog(
-                            "Map Deletion",
-                            $"Failed to move the {label} in the recycle bin.\nWould you like to delete it instead?",
-                            onYes
-                        )
-                    );
-            }
-        }
-        '@
-        Set-Content -Path $path -Value $code -Encoding UTF8
-
-    - name: FORCE WRITE SelectionScreen.cs
-      shell: pwsh
-      run: |
+        # --- 1. SelectionScreen.cs (Smart Refresh Logic) ---
         $path = "Quaver.Shared/Screens/Selection/SelectionScreen.cs"
-        Write-Host "--- FORCE WRITING CORRECT CODE TO: $path ---"
+        Write-Host "Patching: $path"
         $code = @'
         using System;
         using System.Collections.Generic;
@@ -449,9 +33,6 @@ jobs:
         using Microsoft.Xna.Framework.Input;
         using Quaver.API.Enums;
         using Quaver.API.Helpers;
-        using Quaver.Server.Client.Enums;
-        using Quaver.Server.Client.Objects;
-        using Quaver.Shared.Audio;
         using Quaver.Shared.Config;
         using Quaver.Shared.Database.Maps;
         using Quaver.Shared.Database.Playlists;
@@ -461,7 +42,6 @@ jobs:
         using Quaver.Shared.Graphics.Notifications;
         using Quaver.Shared.Graphics.Transitions;
         using Quaver.Shared.Modifiers;
-        using Quaver.Shared.Modifiers.Mods;
         using Quaver.Shared.Online;
         using Quaver.Shared.Scheduling;
         using Quaver.Shared.Screens.Edit;
@@ -525,64 +105,21 @@ jobs:
                     View = new SelectionScreenView(this);
                 }
 
-                public override void OnFirstUpdate()
-                {
-                    GameBase.Game.GlobalUserInterface.Cursor.Alpha = 1;
-                    FadeAudioTrackIn();
-                    SkinManager.StartWatching();
-                    ScreenExiting += (_, _) => SkinManager.StopWatching();
-                    base.OnFirstUpdate();
-                }
-
-                public override void Update(GameTime gameTime)
-                {
-                    if (!Exiting) GameBase.Game.GlobalUserInterface.Cursor.Alpha = 1;
-                    HandleInput(gameTime);
-                    base.Update(gameTime);
-                }
-
-                public override void Destroy()
-                {
-                    CurrentSearchQuery?.Dispose();
-                    AvailableMapsets?.Dispose();
-                    ActiveLeftPanel?.Dispose();
-                    ActiveScrollContainer?.Dispose();
-                    IsPlayTestingInPreview?.Dispose();
-                    RandomMapsetSelected = null;
-                    MapManager.MapsetDeleted -= OnMapsetDeleted;
-                    MapManager.MapDeleted -= OnMapDeleted;
-                    MapManager.MapUpdated -= OnMapUpdated;
-                    MapManager.SongRequestPlayed -= OnSongRequestPlayed;
-                    SkinManager.StopWatching();
-                    ConfigManager.AutoLoadOsuBeatmaps.ValueChanged -= OnAutoLoadOsuBeatmapsChanged;
-                    base.Destroy();
-                }
+                public override void OnFirstUpdate() { GameBase.Game.GlobalUserInterface.Cursor.Alpha = 1; FadeAudioTrackIn(); SkinManager.StartWatching(); ScreenExiting += (_, _) => SkinManager.StopWatching(); base.OnFirstUpdate(); }
+                public override void Update(GameTime gameTime) { if (!Exiting) GameBase.Game.GlobalUserInterface.Cursor.Alpha = 1; HandleInput(gameTime); base.Update(gameTime); }
+                public override void Destroy() { CurrentSearchQuery?.Dispose(); AvailableMapsets?.Dispose(); ActiveLeftPanel?.Dispose(); ActiveScrollContainer?.Dispose(); IsPlayTestingInPreview?.Dispose(); RandomMapsetSelected = null; MapManager.MapsetDeleted -= OnMapsetDeleted; MapManager.MapDeleted -= OnMapDeleted; MapManager.MapUpdated -= OnMapUpdated; MapManager.SongRequestPlayed -= OnSongRequestPlayed; SkinManager.StopWatching(); ConfigManager.AutoLoadOsuBeatmaps.ValueChanged -= OnAutoLoadOsuBeatmapsChanged; base.Destroy(); }
 
                 private void InitializeSearchQueryBindable() => CurrentSearchQuery = new Bindable<string>(null) { Value = FilterPanelSearchBox.PreviousSearchTerm };
                 private void InitializeAvailableMapsetsBindable() => AvailableMapsets = new Bindable<List<Mapset>>(null) { Value = new List<Mapset>() };
                 private void InitializeActiveLeftPanelBindable() { ActiveLeftPanel = new Bindable<SelectContainerPanel>(SelectContainerPanel.Leaderboard) { Value = SelectContainerPanel.Leaderboard }; }
-                private void InitializeActiveScrollContainerBindable()
-                {
-                    ActiveScrollContainer = new Bindable<SelectScrollContainerType>(SelectScrollContainerType.Mapsets) { Value = SelectScrollContainerType.Mapsets };
-                    if (ConfigManager.SelectGroupMapsetsBy.Value == GroupMapsetsBy.Playlists) ActiveScrollContainer.Value = SelectScrollContainerType.Playlists;
-                    if (PlaylistManager.Selected.Value != null && ConfigManager.SelectGroupMapsetsBy.Value == GroupMapsetsBy.Playlists && PlaylistManager.Selected.Value.Maps.Count > 0) ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets;
-                }
+                private void InitializeActiveScrollContainerBindable() { ActiveScrollContainer = new Bindable<SelectScrollContainerType>(SelectScrollContainerType.Mapsets) { Value = SelectScrollContainerType.Mapsets }; if (ConfigManager.SelectGroupMapsetsBy.Value == GroupMapsetsBy.Playlists) ActiveScrollContainer.Value = SelectScrollContainerType.Playlists; if (PlaylistManager.Selected.Value != null && ConfigManager.SelectGroupMapsetsBy.Value == GroupMapsetsBy.Playlists && PlaylistManager.Selected.Value.Maps.Count > 0) ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; }
                 private void InitializeTestPlayingBindable() => IsPlayTestingInPreview = new Bindable<bool>(false) { Value = false };
                 private void InitializeSelectedPlaylist() { if (PlaylistManager.Selected.Value == null && PlaylistManager.Playlists.Count != 0) PlaylistManager.Selected.Value = PlaylistManager.Playlists.First(); }
 
                 private void HandleInput(GameTime gameTime)
                 {
-                    if (Exiting) return;
-                    if (DialogManager.Dialogs.Count != 0) return;
-                    HandleKeyPressEscape();
-                    HandleKeyPressF1();
-                    HandleKeyPressF2();
-                    HandleKeyPressF3();
-                    HandleKeyPressF4();
-                    HandleKeyPressF5();  // Handles Smart/Full Refresh
-                    HandleKeyPressEnter();
-                    HandleKeyPressControlInput();
-                    HandleThumb1MouseButtonClick();
+                    if (Exiting || DialogManager.Dialogs.Count != 0) return;
+                    HandleKeyPressEscape(); HandleKeyPressF1(); HandleKeyPressF2(); HandleKeyPressF3(); HandleKeyPressF4(); HandleKeyPressF5(); HandleKeyPressEnter(); HandleKeyPressControlInput(); HandleThumb1MouseButtonClick();
                     if (ActiveLeftPanel.Value == SelectContainerPanel.Leaderboard) HandleKeyPressTab();
                 }
 
@@ -596,273 +133,160 @@ jobs:
                 private void HandleKeyPressF5() 
                 {
                     if (!KeyboardManager.IsUniqueKeyPress(Keys.F5)) return;
+                    if (KeyboardManager.IsCtrlDown()) { DialogManager.Show(new RefreshDialog()); return; }
 
-                    // Ctrl + F5 = Full Refresh
-                    if (KeyboardManager.IsCtrlDown())
-                    {
-                        DialogManager.Show(new RefreshDialog());
-                        return;
-                    }
-
-                    // F5 = Smart Refresh
                     NotificationManager.Show(NotificationLevel.Info, "Scanning for new maps...");
-                    
                     ThreadScheduler.Run(() =>
                     {
                         var found = MapManager.DetectNewMapsets();
-                        
-                        if (found)
-                        {
-                            if (MapsetImporter.Queue.Count > 0)
-                            {
-                                Exit(() => new ImportingScreen(null, true)); 
-                                return;
-                            }
-
+                        if (found) {
+                            if (MapsetImporter.Queue.Count > 0) { Exit(() => new ImportingScreen(null, true)); return; }
                             NotificationManager.Show(NotificationLevel.Success, "New maps loaded!");
-                            lock (AvailableMapsets.Value) 
-                                AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery);
-                        }
-                        else
-                        {
-                             NotificationManager.Show(NotificationLevel.Success, "No new maps found.");
-                        }
+                            lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery);
+                        } else { NotificationManager.Show(NotificationLevel.Success, "No new maps found."); }
                     });
                 }
 
-                private void HandleKeyPressEnter()
-                {
-                    if (!KeyboardManager.IsUniqueKeyPress(Keys.Enter)) return;
-                    if (KeyboardManager.IsAltDown()) return;
-                    switch (ActiveScrollContainer.Value)
-                    {
-                        case SelectScrollContainerType.Mapsets: if (MapsetHelper.IsSingleDifficultySorted()) ExitToGameplay(); else ActiveScrollContainer.Value = SelectScrollContainerType.Maps; break;
-                        case SelectScrollContainerType.Maps: ExitToGameplay(); break;
-                        case SelectScrollContainerType.Playlists: ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; break;
-                        default: throw new ArgumentOutOfRangeException();
-                    }
-                }
-
-                public static void HandleKeyPressTab()
-                {
-                    if (!KeyboardManager.IsUniqueKeyPress(Keys.Tab)) return;
-                    var index = (int)ConfigManager.LeaderboardSection.Value;
-                    var length = Enum.GetNames(typeof(LeaderboardType)).Length;
-                    int newIndex;
-                    if (KeyboardManager.IsShiftDown()) { if (index - 1 >= 0) newIndex = index - 1; else newIndex = length - 1; }
-                    else { if (index + 1 < length) newIndex = index + 1; else newIndex = 0; }
-                    ConfigManager.LeaderboardSection.Value = (LeaderboardType)newIndex;
-                }
-
-                private void HandleKeyPressControlInput()
-                {
-                    if (!KeyboardManager.IsCtrlDown()) return;
-                    var shiftHeld = KeyboardManager.IsShiftDown();
-                    if (KeyboardManager.IsUniqueKeyPress(ConfigManager.KeyIncreaseGameplayAudioRate.Value)) ModManager.AddSpeedMods(GetNextRate(true, shiftHeld));
-                    if (KeyboardManager.IsUniqueKeyPress(ConfigManager.KeyDecreaseGameplayAudioRate.Value)) ModManager.AddSpeedMods(GetNextRate(false, shiftHeld));
-                    if (KeyboardManager.IsUniqueKeyPress(Keys.D0)) ConfigManager.Pitched.Value = !ConfigManager.Pitched.Value;
-                    if (KeyboardManager.IsUniqueKeyPress(ConfigManager.KeyToggleMirror.Value)) { if (ModManager.IsActivated(ModIdentifier.Mirror)) ModManager.RemoveMod(ModIdentifier.Mirror); else ModManager.AddMod(ModIdentifier.Mirror); }
-                    ChangeScrollSpeed();
-                }
-
-                private void HandleThumb1MouseButtonClick()
-                {
-                    if (!MouseManager.IsUniqueClick(MouseButton.Thumb1)) return;
-                    var view = (SelectionScreenView)View;
-                    switch (ActiveScrollContainer.Value)
-                    {
-                        case SelectScrollContainerType.Mapsets:
-                            if (ConfigManager.SelectGroupMapsetsBy.Value != GroupMapsetsBy.Playlists) return;
-                            if (!view.MapsetContainer.IsHovered()) return;
-                            ActiveScrollContainer.Value = SelectScrollContainerType.Playlists;
-                            break;
-                        case SelectScrollContainerType.Maps:
-                            if (!view.MapContainer.IsHovered()) return;
-                            ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets;
-                            break;
-                        case SelectScrollContainerType.Playlists: return;
-                    }
-                }
-
-                public void HandleBackAction()
-                {
-                    switch (ActiveLeftPanel.Value)
-                    {
-                        case SelectContainerPanel.Leaderboard:
-                        case SelectContainerPanel.MapPreview:
-                            if (ActiveScrollContainer.Value == SelectScrollContainerType.Maps) { ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; return; }
-                            if (ActiveScrollContainer.Value == SelectScrollContainerType.Mapsets && ConfigManager.SelectGroupMapsetsBy.Value == GroupMapsetsBy.Playlists) { ActiveScrollContainer.Value = SelectScrollContainerType.Playlists; return; }
-                            if (ActiveLeftPanel.Value == SelectContainerPanel.Leaderboard) ExitToMenu();
-                            if (ActiveLeftPanel.Value == SelectContainerPanel.MapPreview) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard;
-                            break;
-                        default: ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; break;
-                    }
-                }
-
-                public static float GetNextRate(bool faster, bool forceHalfRate = false)
-                {
-                    var current = ModHelper.GetRateFromMods(ModManager.Mods);
-                    var adjustment = 0.1f;
-                    if (current < 1.0f || forceHalfRate || current == 1.0f && !faster) adjustment = 0.05f;
-                    var next = current + adjustment * (faster ? 1f : -1f);
-                    next = Math.Clamp(next, ModSpeed.MinSpeed, ModSpeed.MaxSpeed);
-                    return (float)Math.Round(next, 2);
-                }
-
-                private void FadeAudioTrackIn()
-                {
-                    if (ConfigManager.VolumeMusic == null) return;
-                    if (AudioEngine.Track != null && AudioEngine.Track.IsPlaying) AudioEngine.Track?.Fade(100, 300);
-                }
-
-                private void ChangeScrollSpeed()
-                {
-                    if (MapManager.Selected.Value == null) return;
-                    var scrollSpeed = ConfigManager.ScrollSpeeds[MapManager.Selected.Value.Mode];
-                    var changed = false;
-                    var speedIncrease = KeyboardManager.IsShiftDown() ? 1 : 10;
-                    if (KeyboardManager.IsUniqueKeyPress(Keys.F3)) { scrollSpeed.Value -= speedIncrease; changed = true; }
-                    else if (KeyboardManager.IsUniqueKeyPress(Keys.F4)) { scrollSpeed.Value += speedIncrease; changed = true; }
-                    if (changed) NotificationManager.Show(NotificationLevel.Info, $"Your {ModeHelper.ToShortHand(MapManager.Selected.Value.Mode)} scroll speed has been changed to: {scrollSpeed.Value / 10f:0.0}");
-                }
-
-                public void SelectPrevRandomMap()
-                {
-                    if (AvailableMapsets.Value.Count == 0) return;
-                    if (RngHistory.Count == 0) return;
-                    var map = RngHistory.Pop();
-                    var index = AvailableMapsets.Value.FindIndex(0, AvailableMapsets.Value.Count, x => x.Maps.Contains(map));
-                    while (index == -1)
-                    {
-                        if (RngHistory.Count == 0) return;
-                        map = RngHistory.Pop();
-                        index = AvailableMapsets.Value.FindIndex(0, AvailableMapsets.Value.Count, x => x.Maps.Contains(map));
-                    }
-                    MapManager.Selected.Value = map;
-                    RandomMapsetSelected?.Invoke(this, new RandomMapsetSelectedEventArgs(map.Mapset, index));
-                }
-
-                public void SelectRandomMap()
-                {
-                    if (AvailableMapsets.Value.Count == 0) return;
-                    ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets;
-                    var index = Rng.Next(AvailableMapsets.Value.Count);
-                    var mapIndex = Rng.Next(AvailableMapsets.Value[index].Maps.Count);
-                    RngHistory.Push(MapManager.Selected.Value);
-                    MapManager.Selected.Value = AvailableMapsets.Value[index].Maps[mapIndex];
-                    RandomMapsetSelected?.Invoke(this, new RandomMapsetSelectedEventArgs(AvailableMapsets.Value[index], index));
-                }
-
-                public void ExitToGameplay()
-                {
-                    if (MapManager.Selected.Value == null) return;
-                    if (OnlineManager.CurrentGame != null) { SelectMultiplayerMap(); return; }
-                    if (SkinManager.Skin.SoundSelect != null) { AudioEngine.Track.Pause(); SkinManager.Skin.SoundSelect.CreateChannel().Play(); }
-                    if (OnlineManager.IsSpectatingSomeone) OnlineManager.Client?.StopSpectating();
-                    if (ModManager.IsActivated(ModIdentifier.Coop)) { Exit(() => new TournamentScreen(2)); return; }
-                    Exit(() => new MapLoadingScreen(new List<Score>()));
-                }
-
-                public void ExitToMenu()
-                {
-                    Exit(() => { if (IsMultiplayer) { OnlineManager.Client?.SetGameCurrentlySelectingMap(false); return new MultiplayerGameScreen(); } return new MainMenuScreen(); });
-                }
-
-                public void ExitToEditor()
-                {
-                    if (MapManager.Selected.Value == null) return;
-                    if (AudioEngine.Track != null && !AudioEngine.Track.IsStopped) AudioEngine.Track.Stop();
-                    if (OnlineManager.CurrentGame != null) { NotificationManager.Show(NotificationLevel.Error, "You cannot use the editor while playing multiplayer."); return; }
-                    if (OnlineManager.IsSpectatingSomeone) OnlineManager.Client?.StopSpectating();
-                    try { IAudioTrack track; try { track = new AudioTrack(MapManager.GetAudioPath(MapManager.Selected.Value), false, false); } catch (Exception) { track = new AudioTrackVirtual(MapManager.Selected.Value.SongLength + 5000); } ModManager.RemoveAllMods(); Exit(() => new EditScreen(MapManager.Selected.Value, track)); }
-                    catch (Exception e) { Logger.Error(e, LogType.Runtime); NotificationManager.Show(NotificationLevel.Error, "Failed to load the editor with this map!"); }
-                }
-
-                private void SelectMultiplayerMap()
-                {
-                    var map = MapManager.Selected.Value;
-                    if (!CheckMultiplayerDifficultyRange()) return;
-                    if (!CheckMultiplayerSongLength()) return;
-                    if (!CheckMultiplayerGameMode()) return;
-                    if (!CheckMultiplayerLongNotePercentage()) return;
-                    Transitioner.FadeIn();
-                    ThreadScheduler.Run(() => { OnlineManager.Client.ChangeMultiplayerGameMap(map.Md5Checksum, map.MapId, map.MapSetId, map.ToString(), (byte)map.Mode, map.DifficultyFromMods(ModManager.Mods), map.GetDifficultyRatings(), map.GetJudgementCount(), MapManager.Selected.Value.GetAlternativeMd5()); OnlineManager.Client.SetGameCurrentlySelectingMap(false); Exit(() => new MultiplayerGameScreen()); });
-                }
-
-                private bool CheckMultiplayerDifficultyRange()
-                {
-                    var diff = MapManager.Selected.Value.DifficultyFromMods(ModManager.Mods);
-                    if (diff < OnlineManager.CurrentGame.MinimumDifficultyRating || diff > OnlineManager.CurrentGame.MaximumDifficultyRating) { NotificationManager.Show(NotificationLevel.Error, $"Difficulty rating must be between {OnlineManager.CurrentGame.MinimumDifficultyRating} and {OnlineManager.CurrentGame.MaximumDifficultyRating} for this multiplayer match!"); return false; }
-                    return true;
-                }
-
-                private bool CheckMultiplayerSongLength()
-                {
-                    var length = MapManager.Selected.Value.SongLength * ModHelper.GetRateFromMods(ModManager.Mods) / 1000;
-                    if (length > OnlineManager.CurrentGame.MaximumSongLength) { NotificationManager.Show(NotificationLevel.Error, $"The maximum length allowed for this multiplayer match is: {OnlineManager.CurrentGame.MaximumSongLength} seconds"); return false; }
-                    return true;
-                }
-
-                private bool CheckMultiplayerGameMode()
-                {
-                    if (!OnlineManager.CurrentGame.AllowedGameModes.Contains((byte)MapManager.Selected.Value.Mode)) { NotificationManager.Show(NotificationLevel.Error, "You cannot pick maps of this game mode in this multiplayer match!"); return false; }
-                    return true;
-                }
-
-                private bool CheckMultiplayerLongNotePercentage()
-                {
-                    var map = MapManager.Selected.Value;
-                    if (map.LNPercentage < OnlineManager.CurrentGame.MinimumLongNotePercentage || map.LNPercentage > OnlineManager.CurrentGame.MaximumLongNotePercentage) { NotificationManager.Show(NotificationLevel.Error, $"You cannot select this map. The long note percentage must be between {OnlineManager.CurrentGame.MinimumLongNotePercentage}%-{OnlineManager.CurrentGame.MaximumLongNotePercentage}% for this multiplayer match."); return false; }
-                    return true;
-                }
-
-                public void ExportSelectedMapset()
-                {
-                    if (MapManager.Selected.Value == null) return;
-                    if (IsExportingMapset) { NotificationManager.Show(NotificationLevel.Warning, "Slow down! You must wait for your previous mapset to export"); return; }
-                    IsExportingMapset = true;
-                    ThreadScheduler.Run(() => 
-                    { 
-                        NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); 
-                        MapManager.Selected.Value.Mapset.ExportToZip(); 
-                        IsExportingMapset = false; 
-                        NotificationManager.Show(NotificationLevel.Success, $"Successfully exported {MapManager.Selected.Value.Mapset.Artist} - {MapManager.Selected.Value.Mapset.Title}!");
-                    });
-                }
-
-                private void SetRichPresence()
-                {
-                    DiscordHelper.Presence.PartySize = 0; DiscordHelper.Presence.PartyMax = 0; DiscordHelper.Presence.StartTimestamp = 0; DiscordHelper.Presence.EndTimestamp = 0;
-                    DiscordHelper.Presence.LargeImageText = OnlineManager.GetRichPresenceLargeKeyText(ConfigManager.SelectedGameMode.Value);
-                    DiscordHelper.Presence.SmallImageKey = ModeHelper.ToShortHand(ConfigManager.SelectedGameMode.Value).ToLower();
-                    DiscordHelper.Presence.SmallImageText = ModeHelper.ToLongHand(ConfigManager.SelectedGameMode.Value);
-                    Helpers.RichPresenceHelper.UpdateRichPresence("In the menus", "Selecting a song");
-                }
-
-                private void OnMapsetDeleted(object sender, MapsetDeletedEventArgs e)
-                {
-                    ThreadScheduler.Run(() => { var index = 0; if (e.Index == -1) index = 0; if (e.Index - 1 >= 0) index = e.Index - 1; lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery); if (index >= 0 && index < AvailableMapsets.Value.Count) { MapManager.SelectMapFromMapset(AvailableMapsets.Value[index]); return; } lock (AudioEngine.Track) { if (AudioEngine.Track.IsDisposed && !AudioEngine.Track.IsStopped) AudioEngine.Track.Dispose(); } });
-                }
-
-                private void OnMapDeleted(object sender, MapDeletedEventArgs e)
-                {
-                    ThreadScheduler.Run(() => { lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery); var mapsetIndex = AvailableMapsets.Value.FindIndex(x => x.Maps.Contains(e.Map)); if (mapsetIndex == -1 && AvailableMapsets.Value.Count != 0) { MapManager.SelectMapFromMapset(AvailableMapsets.Value.First()); return; } lock (AudioEngine.Track) { if (AudioEngine.Track.IsDisposed && !AudioEngine.Track.IsStopped) AudioEngine.Track.Dispose(); } });
-                }
-
+                private void HandleKeyPressEnter() { if (!KeyboardManager.IsUniqueKeyPress(Keys.Enter) || KeyboardManager.IsAltDown()) return; switch (ActiveScrollContainer.Value) { case SelectScrollContainerType.Mapsets: if (MapsetHelper.IsSingleDifficultySorted()) ExitToGameplay(); else ActiveScrollContainer.Value = SelectScrollContainerType.Maps; break; case SelectScrollContainerType.Maps: ExitToGameplay(); break; case SelectScrollContainerType.Playlists: ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; break; default: throw new ArgumentOutOfRangeException(); } }
+                public static void HandleKeyPressTab() { if (!KeyboardManager.IsUniqueKeyPress(Keys.Tab)) return; var index = (int)ConfigManager.LeaderboardSection.Value; var length = Enum.GetNames(typeof(LeaderboardType)).Length; int newIndex; if (KeyboardManager.IsShiftDown()) { if (index - 1 >= 0) newIndex = index - 1; else newIndex = length - 1; } else { if (index + 1 < length) newIndex = index + 1; else newIndex = 0; } ConfigManager.LeaderboardSection.Value = (LeaderboardType)newIndex; }
+                private void HandleKeyPressControlInput() { if (!KeyboardManager.IsCtrlDown()) return; var shiftHeld = KeyboardManager.IsShiftDown(); if (KeyboardManager.IsUniqueKeyPress(ConfigManager.KeyIncreaseGameplayAudioRate.Value)) ModManager.AddSpeedMods(GetNextRate(true, shiftHeld)); if (KeyboardManager.IsUniqueKeyPress(ConfigManager.KeyDecreaseGameplayAudioRate.Value)) ModManager.AddSpeedMods(GetNextRate(false, shiftHeld)); if (KeyboardManager.IsUniqueKeyPress(Keys.D0)) ConfigManager.Pitched.Value = !ConfigManager.Pitched.Value; if (KeyboardManager.IsUniqueKeyPress(ConfigManager.KeyToggleMirror.Value)) { if (ModManager.IsActivated(ModIdentifier.Mirror)) ModManager.RemoveMod(ModIdentifier.Mirror); else ModManager.AddMod(ModIdentifier.Mirror); } ChangeScrollSpeed(); }
+                private void HandleThumb1MouseButtonClick() { if (!MouseManager.IsUniqueClick(MouseButton.Thumb1)) return; var view = (SelectionScreenView)View; switch (ActiveScrollContainer.Value) { case SelectScrollContainerType.Mapsets: if (ConfigManager.SelectGroupMapsetsBy.Value != GroupMapsetsBy.Playlists) return; if (!view.MapsetContainer.IsHovered()) return; ActiveScrollContainer.Value = SelectScrollContainerType.Playlists; break; case SelectScrollContainerType.Maps: if (!view.MapContainer.IsHovered()) return; ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; break; case SelectScrollContainerType.Playlists: return; } }
+                public void HandleBackAction() { switch (ActiveLeftPanel.Value) { case SelectContainerPanel.Leaderboard: case SelectContainerPanel.MapPreview: if (ActiveScrollContainer.Value == SelectScrollContainerType.Maps) { ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; return; } if (ActiveScrollContainer.Value == SelectScrollContainerType.Mapsets && ConfigManager.SelectGroupMapsetsBy.Value == GroupMapsetsBy.Playlists) { ActiveScrollContainer.Value = SelectScrollContainerType.Playlists; return; } if (ActiveLeftPanel.Value == SelectContainerPanel.Leaderboard) ExitToMenu(); if (ActiveLeftPanel.Value == SelectContainerPanel.MapPreview) ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; break; default: ActiveLeftPanel.Value = SelectContainerPanel.Leaderboard; break; } }
+                public static float GetNextRate(bool faster, bool forceHalfRate = false) { var current = ModHelper.GetRateFromMods(ModManager.Mods); var adjustment = 0.1f; if (current < 1.0f || forceHalfRate || current == 1.0f && !faster) adjustment = 0.05f; var next = current + adjustment * (faster ? 1f : -1f); next = Math.Clamp(next, ModSpeed.MinSpeed, ModSpeed.MaxSpeed); return (float)Math.Round(next, 2); }
+                private void FadeAudioTrackIn() { if (ConfigManager.VolumeMusic == null) return; if (AudioEngine.Track != null && AudioEngine.Track.IsPlaying) AudioEngine.Track?.Fade(100, 300); }
+                private void ChangeScrollSpeed() { if (MapManager.Selected.Value == null) return; var scrollSpeed = ConfigManager.ScrollSpeeds[MapManager.Selected.Value.Mode]; var changed = false; var speedIncrease = KeyboardManager.IsShiftDown() ? 1 : 10; if (KeyboardManager.IsUniqueKeyPress(Keys.F3)) { scrollSpeed.Value -= speedIncrease; changed = true; } else if (KeyboardManager.IsUniqueKeyPress(Keys.F4)) { scrollSpeed.Value += speedIncrease; changed = true; } if (changed) NotificationManager.Show(NotificationLevel.Info, $"Your {ModeHelper.ToShortHand(MapManager.Selected.Value.Mode)} scroll speed has been changed to: {scrollSpeed.Value / 10f:0.0}"); }
+                public void SelectPrevRandomMap() { if (AvailableMapsets.Value.Count == 0) return; if (RngHistory.Count == 0) return; var map = RngHistory.Pop(); var index = AvailableMapsets.Value.FindIndex(0, AvailableMapsets.Value.Count, x => x.Maps.Contains(map)); while (index == -1) { if (RngHistory.Count == 0) return; map = RngHistory.Pop(); index = AvailableMapsets.Value.FindIndex(0, AvailableMapsets.Value.Count, x => x.Maps.Contains(map)); } MapManager.Selected.Value = map; RandomMapsetSelected?.Invoke(this, new RandomMapsetSelectedEventArgs(map.Mapset, index)); }
+                public void SelectRandomMap() { if (AvailableMapsets.Value.Count == 0) return; ActiveScrollContainer.Value = SelectScrollContainerType.Mapsets; var index = Rng.Next(AvailableMapsets.Value.Count); var mapIndex = Rng.Next(AvailableMapsets.Value[index].Maps.Count); RngHistory.Push(MapManager.Selected.Value); MapManager.Selected.Value = AvailableMapsets.Value[index].Maps[mapIndex]; RandomMapsetSelected?.Invoke(this, new RandomMapsetSelectedEventArgs(AvailableMapsets.Value[index], index)); }
+                public void ExitToGameplay() { if (MapManager.Selected.Value == null) return; if (OnlineManager.CurrentGame != null) { SelectMultiplayerMap(); return; } if (SkinManager.Skin.SoundSelect != null) { AudioEngine.Track.Pause(); SkinManager.Skin.SoundSelect.CreateChannel().Play(); } if (OnlineManager.IsSpectatingSomeone) OnlineManager.Client?.StopSpectating(); if (ModManager.IsActivated(ModIdentifier.Coop)) { Exit(() => new TournamentScreen(2)); return; } Exit(() => new MapLoadingScreen(new List<Score>())); }
+                public void ExitToMenu() { Exit(() => { if (IsMultiplayer) { OnlineManager.Client?.SetGameCurrentlySelectingMap(false); return new MultiplayerGameScreen(); } return new MainMenuScreen(); }); }
+                public void ExitToEditor() { if (MapManager.Selected.Value == null) return; if (AudioEngine.Track != null && !AudioEngine.Track.IsStopped) AudioEngine.Track.Stop(); if (OnlineManager.CurrentGame != null) { NotificationManager.Show(NotificationLevel.Error, "You cannot use the editor while playing multiplayer."); return; } if (OnlineManager.IsSpectatingSomeone) OnlineManager.Client?.StopSpectating(); try { IAudioTrack track; try { track = new AudioTrack(MapManager.GetAudioPath(MapManager.Selected.Value), false, false); } catch (Exception) { track = new AudioTrackVirtual(MapManager.Selected.Value.SongLength + 5000); } ModManager.RemoveAllMods(); Exit(() => new EditScreen(MapManager.Selected.Value, track)); } catch (Exception e) { Logger.Error(e, LogType.Runtime); NotificationManager.Show(NotificationLevel.Error, "Failed to load the editor with this map!"); } }
+                private void SelectMultiplayerMap() { var map = MapManager.Selected.Value; if (!CheckMultiplayerDifficultyRange()) return; if (!CheckMultiplayerSongLength()) return; if (!CheckMultiplayerGameMode()) return; if (!CheckMultiplayerLongNotePercentage()) return; Transitioner.FadeIn(); ThreadScheduler.Run(() => { OnlineManager.Client.ChangeMultiplayerGameMap(map.Md5Checksum, map.MapId, map.MapSetId, map.ToString(), (byte)map.Mode, map.DifficultyFromMods(ModManager.Mods), map.GetDifficultyRatings(), map.GetJudgementCount(), MapManager.Selected.Value.GetAlternativeMd5()); OnlineManager.Client.SetGameCurrentlySelectingMap(false); Exit(() => new MultiplayerGameScreen()); }); }
+                private bool CheckMultiplayerDifficultyRange() { var diff = MapManager.Selected.Value.DifficultyFromMods(ModManager.Mods); if (diff < OnlineManager.CurrentGame.MinimumDifficultyRating || diff > OnlineManager.CurrentGame.MaximumDifficultyRating) { NotificationManager.Show(NotificationLevel.Error, $"Difficulty rating must be between {OnlineManager.CurrentGame.MinimumDifficultyRating} and {OnlineManager.CurrentGame.MaximumDifficultyRating} for this multiplayer match!"); return false; } return true; }
+                private bool CheckMultiplayerSongLength() { var length = MapManager.Selected.Value.SongLength * ModHelper.GetRateFromMods(ModManager.Mods) / 1000; if (length > OnlineManager.CurrentGame.MaximumSongLength) { NotificationManager.Show(NotificationLevel.Error, $"The maximum length allowed for this multiplayer match is: {OnlineManager.CurrentGame.MaximumSongLength} seconds"); return false; } return true; }
+                private bool CheckMultiplayerGameMode() { if (!OnlineManager.CurrentGame.AllowedGameModes.Contains((byte)MapManager.Selected.Value.Mode)) { NotificationManager.Show(NotificationLevel.Error, "You cannot pick maps of this game mode in this multiplayer match!"); return false; } return true; }
+                private bool CheckMultiplayerLongNotePercentage() { var map = MapManager.Selected.Value; if (map.LNPercentage < OnlineManager.CurrentGame.MinimumLongNotePercentage || map.LNPercentage > OnlineManager.CurrentGame.MaximumLongNotePercentage) { NotificationManager.Show(NotificationLevel.Error, $"You cannot select this map. The long note percentage must be between {OnlineManager.CurrentGame.MinimumLongNotePercentage}%-{OnlineManager.CurrentGame.MaximumLongNotePercentage}% for this multiplayer match."); return false; } return true; }
+                public void ExportSelectedMapset() { if (MapManager.Selected.Value == null) return; if (IsExportingMapset) { NotificationManager.Show(NotificationLevel.Warning, "Slow down! You must wait for your previous mapset to export"); return; } IsExportingMapset = true; ThreadScheduler.Run(() => { NotificationManager.Show(NotificationLevel.Info, "Exporting mapset to zip archive. Please wait!"); MapManager.Selected.Value.Mapset.ExportToZip(); IsExportingMapset = false; NotificationManager.Show(NotificationLevel.Success, $"Successfully exported {MapManager.Selected.Value.Mapset.Artist} - {MapManager.Selected.Value.Mapset.Title}!"); }); }
+                private void SetRichPresence() { DiscordHelper.Presence.PartySize = 0; DiscordHelper.Presence.PartyMax = 0; DiscordHelper.Presence.StartTimestamp = 0; DiscordHelper.Presence.EndTimestamp = 0; DiscordHelper.Presence.LargeImageText = OnlineManager.GetRichPresenceLargeKeyText(ConfigManager.SelectedGameMode.Value); DiscordHelper.Presence.SmallImageKey = ModeHelper.ToShortHand(ConfigManager.SelectedGameMode.Value).ToLower(); DiscordHelper.Presence.SmallImageText = ModeHelper.ToLongHand(ConfigManager.SelectedGameMode.Value); Helpers.RichPresenceHelper.UpdateRichPresence("In the menus", "Selecting a song"); }
+                private void OnMapsetDeleted(object sender, MapsetDeletedEventArgs e) { ThreadScheduler.Run(() => { var index = 0; if (e.Index == -1) index = 0; if (e.Index - 1 >= 0) index = e.Index - 1; lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery); if (index >= 0 && index < AvailableMapsets.Value.Count) { MapManager.SelectMapFromMapset(AvailableMapsets.Value[index]); return; } lock (AudioEngine.Track) { if (AudioEngine.Track.IsDisposed && !AudioEngine.Track.IsStopped) AudioEngine.Track.Dispose(); } }); }
+                private void OnMapDeleted(object sender, MapDeletedEventArgs e) { ThreadScheduler.Run(() => { lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery); var mapsetIndex = AvailableMapsets.Value.FindIndex(x => x.Maps.Contains(e.Map)); if (mapsetIndex == -1 && AvailableMapsets.Value.Count != 0) { MapManager.SelectMapFromMapset(AvailableMapsets.Value.First()); return; } lock (AudioEngine.Track) { if (AudioEngine.Track.IsDisposed && !AudioEngine.Track.IsStopped) AudioEngine.Track.Dispose(); } }); }
                 private void OnMapUpdated(object sender, MapUpdatedEventArgs e) => AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery);
-
-                private void OnSongRequestPlayed(object sender, SongRequestPlayedEventArgs e)
-                {
-                    ThreadScheduler.Run(() => { MapManager.Selected.Value = e.Map; lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery); });
-                }
-
+                private void OnSongRequestPlayed(object sender, SongRequestPlayedEventArgs e) { ThreadScheduler.Run(() => { MapManager.Selected.Value = e.Map; lock (AvailableMapsets.Value) AvailableMapsets.Value = MapsetHelper.FilterMapsets(CurrentSearchQuery); }); }
                 private void OnAutoLoadOsuBeatmapsChanged(object sender, BindableValueChangedEventArgs<bool> e) => Exit(() => new ImportingScreen(null, true));
-
                 public override UserClientStatus GetClientStatus() => new UserClientStatus(ClientStatus.Selecting, -1, "", 0, "", 0);
             }
         }
         '@
         Set-Content -Path $path -Value $code -Encoding UTF8
+
+        # --- 2. MapManager.cs (Improved Error Logging) ---
+        $path = "Quaver.Shared/Database/Maps/MapManager.cs"
+        Write-Host "Patching: $path"
+        $mmcode = Get-Content "BuildPatches/MapManager.cs" -Raw
+        # Replace the simple error log with one that prints the exception details
+        $mmcode = $mmcode.Replace('Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);', 'Logger.Error($"Failed to smart-load mapset: {dirName}. Error: {e}", LogType.Runtime);')
+        Set-Content -Path $path -Value $mmcode -Encoding UTF8
+
+        # --- 3. ReplayHelper.cs (New Export Format) ---
+        $path = "Quaver.Shared/Helpers/ReplayHelper.cs"
+        Write-Host "Patching: $path"
+        $rhcode = @'
+        using System;
+        using System.IO;
+        using System.Text;
+        using System.Collections.Generic;
+        using Quaver.API.Enums;
+        using Quaver.API.Helpers;
+        using Quaver.API.Maps;
+        using Quaver.API.Replays;
+        using Quaver.Shared.Config;
+        using Quaver.Shared.Modifiers;
+        using Wobble.Logging;
+
+        namespace Quaver.Shared.Helpers
+        {
+            public static class ReplayHelper
+            {
+                internal static Replay GeneratePerfectReplay(Qua map, string md5)
+                {
+                    var replay = new Replay(map.Mode, "Autoplay", ModManager.Mods, md5);
+                    if (ModeHelper.IsKeyMode(map.Mode)) return Replay.GeneratePerfectReplayKeys(replay, map);
+                    throw new ArgumentOutOfRangeException();
+                }
+
+                public static void ExportReplayToText(Replay replay, string filename = "last_replay_debug.txt")
+                {
+                    // Legacy support
+                    ExportReplayDebugWithStats(replay, null, filename);
+                }
+
+                public static void ExportReplayDebugWithStats(Replay replay, List<string> stats, string filename = "last_replay_detailed.txt")
+                {
+                    try
+                    {
+                        var sb = new StringBuilder();
+                        sb.AppendLine($"Player: {replay.PlayerName}");
+                        sb.AppendLine($"Map Hash: {replay.MapMd5}");
+                        sb.AppendLine($"Score: {replay.Score}");
+                        sb.AppendLine("TIME | KEYS | HEALTH | ACCURACY");
+                        
+                        if (stats != null && stats.Count > 0)
+                        {
+                            foreach (var line in stats) sb.AppendLine(line);
+                        }
+                        else
+                        {
+                            foreach (var frame in replay.Frames) sb.AppendLine($"{frame.Time} | {frame.Keys}");
+                        }
+
+                        var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, filename);
+                        File.WriteAllText(path, sb.ToString());
+                        Logger.Log($"[ReplayHelper] Saved detailed replay to: {path}", LogLevel.Important, LogType.Runtime);
+                    }
+                    catch (Exception e) { Logger.Log($"[ReplayHelper] Error saving replay: {e.Message}", LogLevel.Important, LogType.Runtime); }
+                }
+            }
+        }
+        '@
+        Set-Content -Path $path -Value $rhcode -Encoding UTF8
+
+        # --- 4. MapDatabaseCache.cs (Crash Fix for Corrupted Maps) ---
+        $path = "Quaver.Shared/Database/Maps/MapDatabaseCache.cs"
+        Write-Host "Patching: $path"
+        $mdcode = Get-Content $path -Raw
+        # Wrap AddNonCachedFiles loop in Try/Catch to skip broken files
+        $mdcode = $mdcode.Replace('var map = Map.FromQua(Qua.Parse(file, true), file);', 'Map map = null; try { map = Map.FromQua(Qua.Parse(file, true), file); } catch (Exception e) { Wobble.Logging.Logger.Error($"Skipping corrupted map {file}: {e.Message}", Wobble.Logging.LogType.Runtime); continue; }')
+        Set-Content -Path $path -Value $mdcode -Encoding UTF8
+
+        # --- 5. GameplayScreen.cs (Record Stats) ---
+        # We need to manually inject the recording logic since we don't have the full file source to overwrite
+        $path = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
+        Write-Host "Patching: $path"
+        $gpcode = Get-Content "BuildPatches/GameplayScreen.cs" -Raw
+        
+        # Add the List field
+        $gpcode = $gpcode.Replace('public class GameplayScreen : QuaverScreen', 'public class GameplayScreen : QuaverScreen { public List<string> DebugReplayStats = new List<string>();')
+        $gpcode = $gpcode.Replace('public class GameplayScreen : QuaverScreen { public List<string> DebugReplayStats = new List<string>(); {', 'public class GameplayScreen : QuaverScreen { public List<string> DebugReplayStats = new List<string>();')
+
+        # Add recording logic to Update (search for a known line)
+        $recordLogic = '
+            if (!IsPaused && !InReplayMode && Ruleset != null) {
+                var k = "";
+                var kim = Ruleset.InputManager as Quaver.Shared.Screens.Gameplay.Rulesets.Input.KeysInputManager;
+                if (kim != null) { for(int i=0; i<Map.GetKeyCount(); i++) k += kim.Keys[i].Pressed ? "1" : "0"; }
+                DebugReplayStats.Add($"{Timing.Time:F0} | {k} | {Ruleset.ScoreProcessor.Health:F1} | {Ruleset.ScoreProcessor.Accuracy:F2}");
+            }
+            base.Update(gameTime);'
+        $gpcode = $gpcode.Replace('base.Update(gameTime);', $recordLogic)
+
+        # Update export call in Destroy/Exit
+        $gpcode = $gpcode.Replace('ReplayHelper.ExportReplayToText(ReplayCapturer.Replay, "last_replay_debug.txt");', 'ReplayHelper.ExportReplayDebugWithStats(ReplayCapturer.Replay, DebugReplayStats);')
+
+        Set-Content -Path $path -Value $gpcode -Encoding UTF8
+
+    - name: Apply MP4 View Patch
+      shell: pwsh
+      run: |
+        Copy-Item -Path "BuildPatches/GameplayScreenView.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreenView.cs" -Force
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
