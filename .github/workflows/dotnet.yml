@@ -19,13 +19,105 @@ jobs:
         git config submodule.Quaver.Server.Client.update none
         git submodule update --recursive || echo "Submodule update failed, continuing..."
 
-    - name: Force Write Patched Files
+    - name: Force Write Fixed Files
       shell: pwsh
       run: |
-        # --- 1. SelectionScreen.cs (Smart Refresh Logic) ---
-        $path = "Quaver.Shared/Screens/Selection/SelectionScreen.cs"
-        Write-Host "Patching: $path"
+        # ========================================================
+        # 1. MapDatabaseCache.cs - FIXES FULL REFRESH CRASH
+        # ========================================================
+        $path = "Quaver.Shared/Database/Maps/MapDatabaseCache.cs"
+        Write-Host "Force Writing: $path"
         $code = @'
+        using System;
+        using System.Collections.Generic;
+        using System.IO;
+        using System.Linq;
+        using LiteDB;
+        using Quaver.API.Maps;
+        using Wobble.Logging;
+
+        namespace Quaver.Shared.Database.Maps
+        {
+            public static class MapDatabaseCache
+            {
+                public static bool IsLoaded { get; private set; }
+                public static List<Map> MapsToUpdate { get; } = new List<Map>();
+
+                public static void Load()
+                {
+                    if (IsLoaded) return;
+                    // (Stubbing the full load logic for brevity, assuming standard Quaver DB behavior is handled by SQLite in other files, 
+                    // this file mostly handles the caching logic for the Select Screen)
+                    IsLoaded = true;
+                }
+
+                public static void AddNonCachedFiles(List<string> files)
+                {
+                    var maps = new List<Map>();
+                    foreach (var file in files)
+                    {
+                        try
+                        {
+                            // --- FIX: Wrap parsing in try/catch to prevent one bad map from crashing the whole game ---
+                            var map = Map.FromQua(Qua.Parse(file, true), file);
+                            
+                            // Validate critical data to prevent null refs later
+                            if (map == null) throw new Exception("Map parsed as null.");
+                            
+                            MapDatabaseCache.AddMap(map);
+                        }
+                        catch (Exception e)
+                        {
+                            // This prints the EXACT file that is broken
+                            Logger.Error($"[CRITICAL ERROR] Skipping corrupted map: {file}\nReason: {e.Message}\n{e.StackTrace}", LogType.Runtime);
+                        }
+                    }
+                }
+
+                // Minimal stubs to ensure compilation if the original file had these methods
+                // (In a real scenario, we would copy the original file content, but since we are replacing it, 
+                // we assume standard usage. If this fails, we will need the full original source to wrap.)
+                // HOWEVER, based on your logs, the crash is in AddNonCachedFiles. 
+                // To be safe, I will use a Regex replace approach for this specific file instead of full overwrite 
+                // to avoid missing other methods.
+            }
+        }
+        '@
+        # NOTE: Actually, overwriting MapDatabaseCache might delete other methods. 
+        # Let's use the SAFE injection method for this file.
+        $realPath = "Quaver.Shared/Database/Maps/MapDatabaseCache.cs"
+        $content = Get-Content $realPath -Raw
+        # Replace the inner loop logic
+        $content = $content.Replace('var map = Map.FromQua(Qua.Parse(file, true), file);', 'Map map = null; try { map = Map.FromQua(Qua.Parse(file, true), file); } catch (Exception e) { Wobble.Logging.Logger.Error($"[CRITICAL SKIP] Failed to load {file}: {e}", Wobble.Logging.LogType.Runtime); continue; }')
+        Set-Content -Path $realPath -Value $content -Encoding UTF8
+
+
+        # ========================================================
+        # 2. MapManager.cs - BETTER ERROR LOGGING
+        # ========================================================
+        $path = "Quaver.Shared/Database/Maps/MapManager.cs"
+        # We perform a string replace on the original file from the repo (not the patch folder)
+        # to ensure we don't break other things, but we fix the logging.
+        $mmPath = "Quaver.Shared/Database/Maps/MapManager.cs"
+        $mmContent = Get-Content $mmPath -Raw
+        # Fix the method signature if it's missing (from your previous patches)
+        # We will assume the BuildPatches/MapManager.cs you have is mostly good, but we want to inject the logging.
+        
+        # Actually, let's just use the overwrite from your working build, but fix the logging line.
+        if (Test-Path "BuildPatches/MapManager.cs") {
+            $mmPatch = Get-Content "BuildPatches/MapManager.cs" -Raw
+            $mmPatch = $mmPatch.Replace('Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);', 'Logger.Error($"Failed to smart-load mapset: {dirName}. Exception: {e}", LogType.Runtime);')
+            Set-Content -Path $mmPath -Value $mmPatch -Encoding UTF8
+        }
+
+
+        # ========================================================
+        # 3. SelectionScreen.cs - FIX REFRESH LOGIC (BOOL vs LIST)
+        # ========================================================
+        $ssPath = "Quaver.Shared/Screens/Selection/SelectionScreen.cs"
+        Write-Host "Force Writing: $ssPath"
+        # This is the "Nuclear" overwrite with the known working logic
+        $ssCode = @'
         using System;
         using System.Collections.Generic;
         using System.Linq;
@@ -42,6 +134,7 @@ jobs:
         using Quaver.Shared.Graphics.Notifications;
         using Quaver.Shared.Graphics.Transitions;
         using Quaver.Shared.Modifiers;
+        using Quaver.Shared.Modifiers.Mods;
         using Quaver.Shared.Online;
         using Quaver.Shared.Scheduling;
         using Quaver.Shared.Screens.Edit;
@@ -176,20 +269,47 @@ jobs:
             }
         }
         '@
-        Set-Content -Path $path -Value $code -Encoding UTF8
+        Set-Content -Path $ssPath -Value $ssCode -Encoding UTF8
 
-        # --- 2. MapManager.cs (Improved Error Logging) ---
-        $path = "Quaver.Shared/Database/Maps/MapManager.cs"
-        Write-Host "Patching: $path"
-        $mmcode = Get-Content "BuildPatches/MapManager.cs" -Raw
-        # Replace the simple error log with one that prints the exception details
-        $mmcode = $mmcode.Replace('Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);', 'Logger.Error($"Failed to smart-load mapset: {dirName}. Error: {e}", LogType.Runtime);')
-        Set-Content -Path $path -Value $mmcode -Encoding UTF8
 
-        # --- 3. ReplayHelper.cs (New Export Format) ---
-        $path = "Quaver.Shared/Helpers/ReplayHelper.cs"
-        Write-Host "Patching: $path"
-        $rhcode = @'
+        # ========================================================
+        # 4. GameplayScreen.cs - FIX SYNTAX & ADD STATS
+        # ========================================================
+        # We start with the valid code from BuildPatches, then apply modifications properly
+        $gpPath = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
+        Write-Host "Force Writing: $gpPath"
+        
+        # We will use the content from your BuildPatches, but inject the stats list safely
+        $gpContent = Get-Content "BuildPatches/GameplayScreen.cs" -Raw
+        
+        # 1. Add the stats list definition class-level
+        $gpContent = $gpContent.Replace("public sealed override ScreenView View { get; protected set; }", "public List<string> DebugReplayStats = new List<string>(); `n public sealed override ScreenView View { get; protected set; }")
+        
+        # 2. Add recording logic to Update()
+        # Find the line "base.Update(gameTime);" and insert logic before it
+        $recordLogic = '
+            if (!IsPaused && !InReplayMode && Ruleset != null && HasStarted) {
+                var k = "";
+                var kim = Ruleset.InputManager as Quaver.Shared.Screens.Gameplay.Rulesets.Input.KeysInputManager;
+                if (kim != null) { for(int i=0; i<Map.GetKeyCount(); i++) k += kim.Keys[i].Pressed ? "1" : "0"; }
+                DebugReplayStats.Add($"{Timing.Time:F0} | {k} | {Ruleset.ScoreProcessor.Health:F1} | {Ruleset.ScoreProcessor.Accuracy:F2}");
+            }
+            base.Update(gameTime);'
+        $gpContent = $gpContent.Replace('base.Update(gameTime);', $recordLogic)
+
+        # 3. Add export logic to Exit/Destroy
+        # Replace the old export call with the new one
+        $gpContent = $gpContent.Replace('ReplayHelper.ExportReplayToText(ReplayCapturer.Replay, "last_replay_debug.txt");', 'ReplayHelper.ExportReplayDebugWithStats(ReplayCapturer.Replay, DebugReplayStats);')
+
+        Set-Content -Path $gpPath -Value $gpContent -Encoding UTF8
+
+
+        # ========================================================
+        # 5. ReplayHelper.cs - DETAILED EXPORT
+        # ========================================================
+        $rhPath = "Quaver.Shared/Helpers/ReplayHelper.cs"
+        Write-Host "Force Writing: $rhPath"
+        $rhCode = @'
         using System;
         using System.IO;
         using System.Text;
@@ -215,7 +335,6 @@ jobs:
 
                 public static void ExportReplayToText(Replay replay, string filename = "last_replay_debug.txt")
                 {
-                    // Legacy support
                     ExportReplayDebugWithStats(replay, null, filename);
                 }
 
@@ -247,45 +366,11 @@ jobs:
             }
         }
         '@
-        Set-Content -Path $path -Value $rhcode -Encoding UTF8
+        Set-Content -Path $rhPath -Value $rhCode -Encoding UTF8
 
-        # --- 4. MapDatabaseCache.cs (Crash Fix for Corrupted Maps) ---
-        $path = "Quaver.Shared/Database/Maps/MapDatabaseCache.cs"
-        Write-Host "Patching: $path"
-        $mdcode = Get-Content $path -Raw
-        # Wrap AddNonCachedFiles loop in Try/Catch to skip broken files
-        $mdcode = $mdcode.Replace('var map = Map.FromQua(Qua.Parse(file, true), file);', 'Map map = null; try { map = Map.FromQua(Qua.Parse(file, true), file); } catch (Exception e) { Wobble.Logging.Logger.Error($"Skipping corrupted map {file}: {e.Message}", Wobble.Logging.LogType.Runtime); continue; }')
-        Set-Content -Path $path -Value $mdcode -Encoding UTF8
-
-        # --- 5. GameplayScreen.cs (Record Stats) ---
-        # We need to manually inject the recording logic since we don't have the full file source to overwrite
-        $path = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
-        Write-Host "Patching: $path"
-        $gpcode = Get-Content "BuildPatches/GameplayScreen.cs" -Raw
-        
-        # Add the List field
-        $gpcode = $gpcode.Replace('public class GameplayScreen : QuaverScreen', 'public class GameplayScreen : QuaverScreen { public List<string> DebugReplayStats = new List<string>();')
-        $gpcode = $gpcode.Replace('public class GameplayScreen : QuaverScreen { public List<string> DebugReplayStats = new List<string>(); {', 'public class GameplayScreen : QuaverScreen { public List<string> DebugReplayStats = new List<string>();')
-
-        # Add recording logic to Update (search for a known line)
-        $recordLogic = '
-            if (!IsPaused && !InReplayMode && Ruleset != null) {
-                var k = "";
-                var kim = Ruleset.InputManager as Quaver.Shared.Screens.Gameplay.Rulesets.Input.KeysInputManager;
-                if (kim != null) { for(int i=0; i<Map.GetKeyCount(); i++) k += kim.Keys[i].Pressed ? "1" : "0"; }
-                DebugReplayStats.Add($"{Timing.Time:F0} | {k} | {Ruleset.ScoreProcessor.Health:F1} | {Ruleset.ScoreProcessor.Accuracy:F2}");
-            }
-            base.Update(gameTime);'
-        $gpcode = $gpcode.Replace('base.Update(gameTime);', $recordLogic)
-
-        # Update export call in Destroy/Exit
-        $gpcode = $gpcode.Replace('ReplayHelper.ExportReplayToText(ReplayCapturer.Replay, "last_replay_debug.txt");', 'ReplayHelper.ExportReplayDebugWithStats(ReplayCapturer.Replay, DebugReplayStats);')
-
-        Set-Content -Path $path -Value $gpcode -Encoding UTF8
-
-    - name: Apply MP4 View Patch
-      shell: pwsh
-      run: |
+        # ========================================================
+        # 6. Apply MP4 View Patch (Simple Copy)
+        # ========================================================
         Copy-Item -Path "BuildPatches/GameplayScreenView.cs" -Destination "Quaver.Shared/Screens/Gameplay/GameplayScreenView.cs" -Force
 
     - name: Setup .NET
