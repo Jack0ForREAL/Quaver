@@ -11,7 +11,7 @@ jobs:
     - uses: actions/checkout@v3
       with:
         submodules: false
-        lfs: true  # <--- THIS IS THE CRITICAL FIX FOR THE MISSING DLL
+        lfs: true
         ref: ${{ github.ref }}
 
     - name: Initialize Submodules
@@ -28,18 +28,13 @@ jobs:
         # ========================================================
         $path = "Quaver.Shared/Database/Maps/MapManager.cs"
         Write-Host "Force Writing: $path"
-        # We perform a targeted replacement on the original file to ensure we don't break database logic
-        # But we must ensure the return type is BOOL for the new feature.
-        # Since we don't have the full original source to safely overwrite without breaking other methods,
-        # we will use the patch file you already have (which works) and just patch the logging line.
         
         if (Test-Path "BuildPatches/MapManager.cs") {
             $mmContent = Get-Content "BuildPatches/MapManager.cs" -Raw
-            # Fix the logging to show the actual error
             $mmContent = $mmContent.Replace('Logger.Error($"Failed to smart-load mapset: {dirName}", LogType.Runtime);', 'Logger.Error($"Failed to smart-load mapset: {dirName}. Exception: {e}", LogType.Runtime);')
             Set-Content -Path $path -Value $mmContent -Encoding UTF8
         } else {
-            Write-Host "::error::MapManager.cs missing from BuildPatches! Cannot apply fix."
+            Write-Host "::error::MapManager.cs missing from BuildPatches!"
             exit 1
         }
 
@@ -284,15 +279,15 @@ jobs:
         Write-Host "Force Writing: $path"
         $gpContent = Get-Content "BuildPatches/GameplayScreen.cs" -Raw
         
-        # FIX: Ensure we inject the List safely without adding extra braces
+        # Ensure we inject the List safely without adding extra braces
         $gpContent = $gpContent.Replace("public sealed override ScreenView View { get; protected set; }", "public List<string> DebugReplayStats = new List<string>(); `n public sealed override ScreenView View { get; protected set; }")
         
-        # Inject recording logic
+        # Inject recording logic (FIXED: Uses BindingStore instead of Keys)
         $recordLogic = '
             if (!IsPaused && !InReplayMode && Ruleset != null && HasStarted) {
                 var k = "";
                 var kim = Ruleset.InputManager as Quaver.Shared.Screens.Gameplay.Rulesets.Input.KeysInputManager;
-                if (kim != null) { for(int i=0; i<Map.GetKeyCount(); i++) k += kim.Keys[i].Pressed ? "1" : "0"; }
+                if (kim != null) { for(int i=0; i<Map.GetKeyCount(); i++) k += kim.BindingStore[i].Pressed ? "1" : "0"; }
                 DebugReplayStats.Add($"{Timing.Time:F0} | {k} | {Ruleset.ScoreProcessor.Health:F1} | {Ruleset.ScoreProcessor.Accuracy:F2}");
             }
             base.Update(gameTime);'
