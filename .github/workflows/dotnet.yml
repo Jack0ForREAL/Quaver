@@ -24,10 +24,736 @@ jobs:
       shell: pwsh
       run: |
         # ========================================================
-        # 1. ReplayHelper.cs (Fixed: Compressed format + Same-MS tiebreakers)
+        # 1. MapManager.cs (From your provided clean source code)
         # ========================================================
-        $path = "Quaver.Shared/Helpers/ReplayHelper.cs"
-        Write-Host "Force Writing: $path"
+        $path1 = "Quaver.Shared/Database/Maps/MapManager.cs"
+        $mmCode = @'
+        using System;
+        using System.Collections.Generic;
+        using System.IO;
+        using System.Linq;
+        using System.Threading.Tasks;
+        using Emik;
+        using Microsoft.Xna.Framework.Graphics;
+        using Quaver.API.Enums;
+        using Quaver.API.Maps;
+        using Quaver.API.Maps.Parsers;
+        using Quaver.Server.Client;
+        using Quaver.Server.Client.Objects.Twitch;
+        using Quaver.Shared.Assets;
+        using Quaver.Shared.Audio;
+        using Quaver.Shared.Config;
+        using Quaver.Shared.Database.Playlists;
+        using Quaver.Shared.Graphics;
+        using Quaver.Shared.Graphics.Backgrounds;
+        using Quaver.Shared.Graphics.Notifications;
+        using Quaver.Shared.Helpers;
+        using Quaver.Shared.Modifiers;
+        using Quaver.Shared.Online.API.Maps;
+        using Quaver.Shared.Screens.Selection.UI.Maps;
+        using RestSharp;
+        using RestSharp.Extensions;
+        using Wobble.Audio.Tracks;
+        using Wobble.Bindables;
+        using Wobble.Graphics.UI.Dialogs;
+        using Wobble.Logging;
+
+        namespace Quaver.Shared.Database.Maps
+        {
+            public static class MapManager
+            {
+                public static Bindable<Map> Selected { get; set; } = new Bindable<Map>(null);
+                public static List<Mapset> Mapsets { get; set; } = new List<Mapset>();
+                public static List<Map> RecentlyPlayed { get; set; } = new List<Map>();
+                public static string OsuSongsFolder { get; set; }
+                public static string CurrentAudioPath => GetAudioPath(Selected?.Value);
+                public static Texture2D CurrentBackground { get; set; }
+                public static string CurrentBackgroundPath => GetBackgroundPath(Selected.Value);
+
+                public static event EventHandler<MapsetDeletedEventArgs> MapsetDeleted;
+                public static event EventHandler<MapDeletedEventArgs> MapDeleted;
+                public static event EventHandler<MapUpdatedEventArgs> MapUpdated;
+                public static event EventHandler<SongRequestPlayedEventArgs> SongRequestPlayed;
+
+                public static void SelectMapFromMapset(Mapset mapset)
+                {
+                    Map Select(List<Map> maps, ModIdentifier mods)
+                    {
+                        if (maps.Count == 0) return null;
+                        var minDelta = Double.PositiveInfinity;
+                        Map selection = null;
+                        foreach (var map in maps)
+                        {
+                            var target = ConfigManager.PrioritizedMapDifficulty[map.Mode].Value / 10d;
+                            double delta = Math.Abs(map.DifficultyFromMods(mods) - target);
+                            if (delta < minDelta)
+                            {
+                                selection = map;
+                                minDelta = delta;
+                            }
+                        }
+                        return selection;
+                    }
+                    List<Map> prioritized = mapset.Maps.FindAll(x => x.Mode == ConfigManager.PrioritizedGameMode.Value);
+                    Selected.Value = Select(prioritized, ModManager.Mods) ?? Select(mapset.Maps, ModManager.Mods);
+                }
+
+                public static string GetBackgroundPath(Map map)
+                {
+                    if (map == null) return "";
+                    switch (map.Game)
+                    {
+                        case MapGame.Osu:
+                            var osu = new OsuBeatmap(OsuSongsFolder + map.Directory + "/" + map.Path);
+                            return $@"{OsuSongsFolder}/{map.Directory}/{osu.Background}";
+                        case MapGame.Quaver:
+                            return ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.BackgroundPath;
+                        case MapGame.Etterna:
+                            return map.BackgroundPath;
+                        default:
+                            return "";
+                    }
+                }
+
+                public static string GetBannerPath(Map map)
+                {
+                    if (map == null) return "";
+                    switch (map.Game)
+                    {
+                        case MapGame.Osu: return "";
+                        case MapGame.Quaver: return ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.BannerPath;
+                        case MapGame.Etterna: return map.BannerPath;
+                        default: return "";
+                    }
+                }
+
+                public static string GetMapsetBannerPath(Mapset mapset)
+                {
+                    var map = mapset.Maps.First();
+                    switch (map.Game)
+                    {
+                        case MapGame.Osu: return "";
+                        case MapGame.Quaver: return (ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.BannerPath).Replace("\\", "/");
+                        case MapGame.Etterna: return map.BannerPath;
+                        default: return "";
+                    }
+                }
+
+                public static string GetAudioPath(Map map)
+                {
+                    if (map == null) return "";
+                    switch (map.Game)
+                    {
+                        case MapGame.Osu: return OsuSongsFolder + "/" + map.Directory + "/" + map.AudioPath;
+                        case MapGame.Quaver: return ConfigManager.SongDirectory + "/" + map.Directory + "/" + map.AudioPath;
+                        case MapGame.Etterna: return map.AudioPath;
+                        default: return "";
+                    }
+                }
+
+                public static Map FindMapFromMd5(string md5)
+                {
+                    foreach (var set in Mapsets)
+                    {
+                        var found = set.Maps.Find(x => x.Md5Checksum == md5);
+                        if (found != null) return found;
+                    }
+                    return null;
+                }
+
+                public static Map FindMapFromOnlineId(int id)
+                {
+                    foreach (var set in Mapsets)
+                    {
+                        var found = set.Maps.Find(x => x.MapId == id);
+                        if (found != null) return found;
+                    }
+                    return null;
+                }
+
+                public static string GetCustomAudioSamplePath(Map map, string samplePath)
+                {
+                    switch (map.Game)
+                    {
+                        case MapGame.Osu: return OsuSongsFolder + "/" + map.Directory + "/" + samplePath;
+                        case MapGame.Quaver: return ConfigManager.SongDirectory + "/" + map.Directory + "/" + samplePath;
+                        default: return "";
+                    }
+                }
+
+                public static void ViewOnlineListing(Map map = null)
+                {
+                    if (map == null) map = Selected.Value;
+                    if (map == null) return;
+                    if (map.MapId == -1) { NotificationManager.Show(NotificationLevel.Error, "This map is not submitted online!"); return; }
+                    BrowserHelper.OpenURL($"https://quavergame.com/mapsets/map/{map.MapId}");
+                }
+
+                public static void Delete(Map map, int index)
+                {
+                    if (map.Game != MapGame.Quaver) { NotificationManager.Show(NotificationLevel.Error, "You cannot delete a map loaded from another game"); return; }
+                    try
+                    {
+                        var mapsetPath = Path.Combine(ConfigManager.SongDirectory.Value, map.Mapset.Directory);
+                        var path = Path.Combine(mapsetPath, map.Path);
+                        if (Rubbish.Move(path)) MapDatabaseCache.RemoveMap(map);
+                        else
+                        {
+                            ShowFallbackMapDeletionDialog("map", () =>
+                            {
+                                try { File.Delete(path); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
+                                if (File.Exists(path)) { NotificationManager.Show(NotificationLevel.Error, "Unable to delete the map. Is the file protected?"); return; }
+                                MapDatabaseCache.RemoveMap(map);
+                                map.Mapset.Maps.Remove(map);
+                                if (map.Mapset.Maps.Count == 0) Mapsets.Remove(map.Mapset);
+                                PlaylistManager.RemoveMapFromAllPlaylists(map);
+                                MapDeleted?.Invoke(typeof(MapManager), new MapDeletedEventArgs(map, index));
+                            });
+                            return;
+                        }
+                    }
+                    catch (Exception e) { Logger.Error(e, LogType.Runtime); }
+                    map.Mapset.Maps.Remove(map);
+                    if (map.Mapset.Maps.Count == 0) Mapsets.Remove(map.Mapset);
+                    PlaylistManager.RemoveMapFromAllPlaylists(map);
+                    MapDeleted?.Invoke(typeof(MapManager), new MapDeletedEventArgs(map, index));
+                }
+
+                public static void Delete(Mapset mapset, int index)
+                {
+                    if (mapset.Maps.Count == 0) return;
+                    if (mapset.Maps.First().Game != MapGame.Quaver) { NotificationManager.Show(NotificationLevel.Error, "You cannot delete a mapset loaded from another game"); return; }
+                    if (mapset.Maps.Contains(Selected.Value))
+                    {
+                        var oldTrack = AudioEngine.Track;
+                        AudioEngine.Track = new AudioTrackVirtual(300000);
+                        if (oldTrack != null && !oldTrack.IsDisposed) oldTrack.Dispose();
+                    }
+                    try
+                    {
+                        var directory = Path.Combine(ConfigManager.SongDirectory.Value, mapset.Directory);
+                        if (!Rubbish.Move(directory) && Directory.Exists(directory))
+                        {
+                            ShowFallbackMapDeletionDialog("mapset", () =>
+                            {
+                                try { Directory.Delete(directory, true); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
+                                if (Directory.Exists(directory)) { NotificationManager.Show(NotificationLevel.Error, "Unable to delete the mapset. Is the directory protected?"); return; }
+                                try { mapset.Maps.ForEach(MapDatabaseCache.RemoveMap); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
+                                Mapsets.Remove(mapset);
+                                MapsetDeleted?.Invoke(typeof(MapManager), new MapsetDeletedEventArgs(mapset, index));
+                                lock (BackgroundHelper.MapsetBanners)
+                                {
+                                    if (!BackgroundHelper.MapsetBanners.ContainsKey(mapset.Directory)) return;
+                                    var banner = BackgroundHelper.MapsetBanners[mapset.Directory];
+                                    if (banner != UserInterface.DefaultBanner) banner.Dispose();
+                                    BackgroundHelper.MapsetBanners.Remove(mapset.Directory);
+                                }
+                            });
+                            return;
+                        }
+                    }
+                    catch (Exception e) { Logger.Error(e, LogType.Runtime); }
+                    try { mapset.Maps.ForEach(MapDatabaseCache.RemoveMap); } catch (Exception e) { Logger.Error(e, LogType.Runtime); }
+                    Mapsets.Remove(mapset);
+                    MapsetDeleted?.Invoke(typeof(MapManager), new MapsetDeletedEventArgs(mapset, index));
+                    lock (BackgroundHelper.MapsetBanners)
+                    {
+                        if (!BackgroundHelper.MapsetBanners.ContainsKey(mapset.Directory)) return;
+                        var banner = BackgroundHelper.MapsetBanners[mapset.Directory];
+                        if (banner != UserInterface.DefaultBanner) banner.Dispose();
+                        BackgroundHelper.MapsetBanners.Remove(mapset.Directory);
+                    }
+                }
+
+                public static void UpdateMapToLatestVersion(Map outdated)
+                {
+                    try
+                    {
+                        var lookup = new APIRequestMapInformation(outdated.MapId).ExecuteRequest();
+                        if (lookup.Status != 200) throw new Exception($"Map updated failed. APIRequestMapInformation failed with status: {lookup.Status}");
+                        foreach (var mapset in Mapsets)
+                        {
+                            var foundMap = mapset.Maps.Find(x => x.Md5Checksum == lookup.Map.Md5);
+                            if (foundMap == null) continue;
+                            outdated.Mapset.Maps.Remove(outdated);
+                            MapDatabaseCache.RemoveMap(outdated);
+                            if (outdated.Mapset.Maps.Count == 0) Mapsets.Remove(outdated.Mapset);
+                            if (Selected.Value == outdated) Selected.Value = foundMap;
+                            PlaylistManager.UpdateMapInPlaylists(outdated, foundMap);
+                            MapUpdated?.Invoke(typeof(MapManager), new MapUpdatedEventArgs(outdated, foundMap));
+                            return;
+                        }
+                        var path = $"{ConfigManager.SongDirectory.Value}/{outdated.Directory}/{outdated.Path}";
+                        Logger.Important($"Downloading latest version of map: {outdated.Id}", LogType.Runtime);
+                        var client = new RestClient($"{OnlineClient.API_ENDPOINT}");
+                        client.DownloadData(new RestRequest($"{OnlineClient.API_ENDPOINT}/d/web/map/{outdated.MapId}", Method.GET)).SaveAs(path);
+                        Logger.Important($"Successfully downloaded latest version of map: {outdated.Id}", LogType.Runtime);
+                        var newMap = Map.FromQua(Qua.Parse(path), path);
+                        newMap.CalculateDifficulties();
+                        newMap.Id = outdated.Id;
+                        newMap.Mapset = outdated.Mapset;
+                        newMap.Directory = outdated.Directory;
+                        newMap.Path = outdated.Path;
+                        newMap.DateAdded = outdated.DateAdded;
+                        newMap.TimesPlayed = outdated.TimesPlayed;
+                        newMap.LocalOffset = outdated.LocalOffset;
+                        MapDatabaseCache.UpdateMap(outdated);
+                        outdated.Mapset.Maps.Remove(outdated);
+                        outdated.Mapset.Maps.Add(newMap);
+                        outdated.Mapset.Maps = newMap.Mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
+                        if (Selected.Value == outdated) Selected.Value = newMap;
+                        PlaylistManager.UpdateMapInPlaylists(outdated, newMap);
+                        MapUpdated?.Invoke(typeof(MapManager), new MapUpdatedEventArgs(outdated, newMap));
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error(e, LogType.Runtime);
+                        MapUpdated?.Invoke(typeof(MapManager), new MapUpdatedEventArgs(outdated, outdated));
+                    }
+                }
+
+                public static void PlaySongRequest(SongRequest request, Map map)
+                {
+                    SongRequestPlayed?.Invoke(typeof(MapManager), new SongRequestPlayedEventArgs(request, map));
+                }
+
+                public static bool DetectNewMapsets() => ReloadNewMapsets();
+
+                public static bool ReloadNewMapsets()
+                {
+                    var found = false;
+                    var directory = ConfigManager.SongDirectory.Value;
+
+                    if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+                        return false;
+
+                    var files = Directory.GetFiles(directory, "*.*", SearchOption.TopDirectoryOnly)
+                        .Where(x => x.EndsWith(".osz") || x.EndsWith(".qp") || x.EndsWith(".smzip")).ToList();
+
+                    foreach (var file in files)
+                    {
+                        if (!MapsetImporter.Queue.Contains(file))
+                        {
+                            MapsetImporter.Queue.Add(file);
+                            found = true;
+                        }
+                    }
+
+                    var directories = Directory.GetDirectories(directory);
+                    var loadedMapsets = new HashSet<string>();
+                    lock (Mapsets)
+                    {
+                        foreach (var set in Mapsets)
+                            loadedMapsets.Add(set.Directory);
+                    }
+
+                    foreach (var dir in directories)
+                    {
+                        var dirName = new DirectoryInfo(dir).Name;
+
+                        if (loadedMapsets.Contains(dirName))
+                            continue;
+
+                        try
+                        {
+                            var mapset = new Mapset { Directory = dirName, Maps = new List<Map>() };
+                            var mapFiles = Directory.GetFiles(dir, "*.qua");
+
+                            foreach (var mapFile in mapFiles)
+                            {
+                                var map = Map.FromQua(Qua.Parse(mapFile), mapFile);
+                                map.Mapset = mapset;
+                                map.Directory = dirName;
+                                map.Path = Path.GetFileName(mapFile);
+                                map.CalculateDifficulties();
+                                mapset.Maps.Add(map);
+                            }
+
+                            if (mapset.Maps.Count > 0)
+                            {
+                                mapset.Maps = mapset.Maps.OrderBy(x => x.DifficultyFromMods(ModManager.Mods)).ToList();
+                                
+                                lock (Mapsets)
+                                    Mapsets.Add(mapset);
+
+                                found = true;
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.Error($"Failed to smart-load mapset: {dirName}. Exception: {e}", LogType.Runtime);
+                        }
+                    }
+
+                    return found;
+                }
+
+                private static void ShowFallbackMapDeletionDialog(string label, Action onYes) =>
+                    DialogManager.Show(
+                        new YesNoDialog(
+                            "Map Deletion",
+                            $"Failed to move the {label} in the recycle bin.\nWould you like to delete it instead?",
+                            onYes
+                        )
+                    );
+            }
+        }
+        '@
+        Set-Content -Path $path1 -Value $mmCode -Encoding UTF8
+        if (Test-Path "BuildPatches/MapManager.cs") { Set-Content -Path "BuildPatches/MapManager.cs" -Value $mmCode -Encoding UTF8 }
+
+        # ========================================================
+        # 2. MapDatabaseCache.cs (From your provided clean source code)
+        # ========================================================
+        $path2 = "Quaver.Shared/Database/Maps/MapDatabaseCache.cs"
+        $mdcCode = @'
+        using System;
+        using System.Collections.Generic;
+        using System.IO;
+        using System.Linq;
+        using osu.Shared;
+        using osu_database_reader.BinaryFiles;
+        using Quaver.API.Enums;
+        using Quaver.API.Maps;
+        using Quaver.API.Maps.Processors.Difficulty.Rulesets.Keys;
+        using Quaver.Shared.Audio;
+        using Quaver.Shared.Config;
+        using Quaver.Shared.Database.Playlists;
+        using Quaver.Shared.Database.Settings;
+        using Quaver.Shared.Graphics.Notifications;
+        using SharpCompress.Archives;
+        using SharpCompress.Common;
+        using SQLite;
+        using Wobble;
+        using Wobble.Logging;
+        using GameMode = osu.Shared.GameMode;
+
+        namespace Quaver.Shared.Database.Maps
+        {
+            public static class MapDatabaseCache
+            {
+                public static List<Map> MapsToUpdate { get; } = new List<Map>();
+
+                private static List<string> DefaultMapsetFiles { get; } = new List<string>()
+                {
+                    "+TEK - Stars and Bunnies",
+                    "HyuN - CrossOver",
+                    "HyuN - Princess Of Winter",
+                    "Rabbit House - Have A Party Time!",
+                    "zetoban - Csikos Post",
+                    "zetoban - Umami Packed Mountaineering",
+                    "zetoban - Flowering Night",
+                    "Plum - Fantasy Collision",
+                    "Lollipop - vibing oustide the supermarket at 1am",
+                    "HyuN feat. Yuri - Disorder",
+                    "Rabbit House - Dead Rabbit And Witch's Blood"
+                };
+
+                private static string DefaultMapChecksum { get; } = "5004c3553cd29ccd3191e5c266f2f282";
+
+                public static void Load(bool fullSync)
+                {
+                    CreateTable();
+                    var quaFiles = Directory.GetFiles(ConfigManager.SongDirectory.Value, "*.qua", SearchOption.AllDirectories).ToList();
+                    Logger.Important($"Found {quaFiles.Count} .qua files inside the song directory", LogType.Runtime);
+
+                    if (fullSync)
+                    {
+                        SyncMissingOrUpdatedFiles(quaFiles);
+                        AddNonCachedFiles(quaFiles);
+                    }
+
+                    OrderAndSetMapsets();
+
+                    if (MapManager.Mapsets.Count == 0)
+                        ImportDefaultMapsets();
+                }
+
+                private static void CreateTable()
+                {
+                    try
+                    {
+                        DatabaseManager.Connection.CreateTable<Map>();
+                        Logger.Important($"Map Database has been created", LogType.Runtime);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error(e, LogType.Runtime);
+                        throw;
+                    }
+                }
+
+                private static void SyncMissingOrUpdatedFiles(IReadOnlyCollection<string> files)
+                {
+                    var maps = FetchAll();
+                    var fileHashSet = files.ToHashSet();
+
+                    foreach (var map in maps)
+                    {
+                        var filePath = BackslashToForward($"{ConfigManager.SongDirectory.Value}/{map.Directory}/{map.Path}");
+
+                        if (fileHashSet.Contains(BackslashToForward(filePath)))
+                        {
+                            if (map.LastFileWrite != File.GetLastWriteTimeUtc(filePath))
+                            {
+                                if (map.Md5Checksum == MapsetHelper.GetMd5Checksum(filePath))
+                                    continue;
+
+                                Map newMap;
+                                try
+                                {
+                                    newMap = Map.FromQua(map.LoadQua(false), filePath);
+                                }
+                                catch (Exception e)
+                                {
+                                    Logger.Error(e, LogType.Runtime);
+                                    File.Delete(filePath);
+                                    DatabaseManager.Connection.Delete(map);
+                                    Logger.Important($"Removed {filePath} from the cache, as the file could not be parsed.", LogType.Runtime);
+                                    continue;
+                                }
+
+                                newMap.CalculateDifficulties();
+                                newMap.Id = map.Id;
+                                DatabaseManager.Connection.Update(newMap);
+                                Logger.Important($"Updated cached map: {newMap.Id}, as the file was updated.", LogType.Runtime);
+                            }
+                            continue;
+                        }
+
+                        DatabaseManager.Connection.Delete(map);
+                        Logger.Important($"Removed {filePath} from the cache, as the file no longer exists", LogType.Runtime);
+                    }
+                }
+
+                private static void AddNonCachedFiles(List<string> files)
+                {
+                    var maps = FetchAll();
+                    var hashset = new HashSet<string>();
+                    maps.ForEach(x => hashset.Add(BackslashToForward($"{ConfigManager.SongDirectory.Value}/{x.Directory}/{x.Path}")));
+
+                    foreach (var file in files)
+                    {
+                        if (hashset.Contains(BackslashToForward(file)))
+                            continue;
+
+                        try
+                        {
+                            var map = Map.FromQua(Qua.Parse(file, false), file);
+                            InsertMap(map);
+
+                            if (!QuaverSettingsDatabaseCache.OutdatedMaps.Contains(map))
+                                QuaverSettingsDatabaseCache.OutdatedMaps.Add(map);
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.Error(e, LogType.Runtime);
+                        }
+                    }
+                }
+
+                public static List<Map> FetchAll() => DatabaseManager.Connection.Table<Map>().ToList();
+                private static string BackslashToForward(string p) => p.Replace("\\", "/");
+
+                public static int InsertMap(Map map)
+                {
+                    try
+                    {
+                        DatabaseManager.Connection.Insert(map);
+                        return DatabaseManager.Connection.Get<Map>(x => x.Md5Checksum == map.Md5Checksum).Id;
+                    }
+                    catch (Exception e)
+                    {
+                        var existing = DatabaseManager.Connection.Find<Map>(x => x.Md5Checksum == map.Md5Checksum);
+                        if (existing == null)
+                        {
+                            Logger.Error(e, LogType.Runtime);
+                            return -1;
+                        }
+
+                        var newPath = Path.Combine(ConfigManager.SongDirectory.Value, map.Directory, map.Path);
+                        var existingPath = Path.Combine(ConfigManager.SongDirectory.Value, existing.Directory, existing.Path);
+
+                        if (existingPath != newPath)
+                        {
+                            Logger.Warning($"Tried importing a duplicate of `{existingPath}` at `{newPath}`, deleting.", LogType.Runtime);
+                            File.Delete(newPath);
+                            return -1;
+                        }
+
+                        Logger.Warning($"Tried importing `{existingPath}` twice.", LogType.Runtime);
+                        return -1;
+                    }
+                }
+
+                public static void UpdateMap(Map map)
+                {
+                    try
+                    {
+                        DatabaseManager.Connection.Update(map);
+                        Logger.Debug($"Updated map: {map.Md5Checksum} (#{map.Id}) in the cache", LogType.Runtime);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error(e, LogType.Runtime);
+                    }
+                }
+
+                public static void RemoveMap(Map map)
+                {
+                    try
+                    {
+                        DatabaseManager.Connection.Delete(map);
+                        Logger.Debug($"Deleted map: {map.Md5Checksum} (#{map.Id}) in the cache", LogType.Runtime);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error(e, LogType.Runtime);
+                    }
+                }
+
+                public static Map FindSet(int id)
+                {
+                    try
+                    {
+                        return DatabaseManager.Connection.Find<Map>(x => x.MapSetId == id);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error(e, LogType.Runtime);
+                        return null;
+                    }
+                }
+
+                public static void OrderAndSetMapsets(bool skipPlaylistLoad = false)
+                {
+                    OtherGameMapDatabaseCache.Initialize();
+                    var maps = FetchAll();
+
+                    if (ConfigManager.AutoLoadOsuBeatmaps.Value)
+                        maps = maps.Concat(OtherGameMapDatabaseCache.Load()).ToList();
+
+                    var mapsets = MapsetHelper.ConvertMapsToMapsets(maps);
+                    MapManager.Mapsets = MapsetHelper.OrderMapsByDifficulty(MapsetHelper.OrderMapsetsByArtist(mapsets));
+                    MapManager.RecentlyPlayed = new List<Map>();
+
+                    if (!skipPlaylistLoad)
+                        PlaylistManager.Load();
+
+                    foreach (var mapset in MapManager.Mapsets)
+                    {
+                        foreach (var map in mapset.Maps)
+                        {
+                            if (map.RegularNoteCount + map.LongNoteCount >= 2)
+                            {
+                                if (map.Difficulty105X == 0f && !OtherGameMapDatabaseCache.MapsToCache[OtherGameCacheAction.Add].Contains(map))
+                                    OtherGameMapDatabaseCache.MapsToCache[OtherGameCacheAction.Update].Add(map);
+                            }
+                        }
+                    }
+
+                    var outdated = FetchAll().FindAll(x => x.DifficultyProcessorVersion != DifficultyProcessorKeys.Version);
+                    OtherGameMapDatabaseCache.MapsToCache[OtherGameCacheAction.Update].AddRange(outdated);
+                }
+
+                public static void ForceUpdateMaps(bool createNewMaps = true)
+                {
+                    for (var i = 0; i < MapsToUpdate.Count; i++)
+                    {
+                        try
+                        {
+                            var path = $"{ConfigManager.SongDirectory}/{MapsToUpdate[i].Directory}/{MapsToUpdate[i].Path}";
+                            if (!File.Exists(path))
+                                continue;
+
+                            Map map;
+                            if (createNewMaps)
+                                map = Map.FromQua(Qua.Parse(path, false), path);
+                            else
+                                map = MapsToUpdate[i];
+
+                            map.CalculateDifficulties();
+                            map.Id = MapsToUpdate[i].Id;
+                            map.Directory = MapsToUpdate[i].Directory;
+                            map.Mapset = MapsToUpdate[i].Mapset;
+
+                            if (map.Id == 0)
+                                map.Id = InsertMap(map);
+                            else
+                            {
+                                UpdateMap(map);
+                                PlaylistManager.UpdateMapInPlaylists(MapsToUpdate[i], map);
+                            }
+
+                            MapsToUpdate[i] = map;
+
+                            if (createNewMaps)
+                                MapManager.Selected.Value = map;
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.Error(e, LogType.Runtime);
+                        }
+                    }
+
+                    MapsToUpdate.Clear();
+
+                    if (createNewMaps)
+                    {
+                        OrderAndSetMapsets();
+                        PlaylistManager.Load();
+
+                        var selectedMapset = MapManager.Mapsets.Find(x => x.Maps.Any(y => y.Md5Checksum == MapManager.Selected.Value.Md5Checksum));
+                        MapManager.Selected.Value = selectedMapset.Maps.Find(x => x.Md5Checksum == MapManager.Selected.Value.Md5Checksum);
+                    }
+                }
+
+                private static void ImportDefaultMapsets()
+                {
+                    foreach (var map in DefaultMapsetFiles)
+                    {
+                        var directory = $"{ConfigManager.SongDirectory.Value}/{map}";
+                        if (Directory.Exists(directory))
+                            continue;
+
+                        Directory.CreateDirectory(directory);
+                        try
+                        {
+                            var stream = GameBase.Game.Resources.GetStream($"Quaver.Resources/DefaultMaps/{map}.qp");
+                            using (var archive = ArchiveFactory.Open(stream))
+                            {
+                                foreach (var entry in archive.Entries)
+                                {
+                                    if (!entry.IsDirectory)
+                                        entry.WriteToDirectory(directory, new ExtractionOptions() { ExtractFullPath = true, Overwrite = true });
+                                }
+                            }
+                            Logger.Important($"Successfully imported default map: {map}", LogType.Runtime);
+                        }
+                        catch (Exception e)
+                        {
+                            Logger.Error($"Failed to import default map: {map}", LogType.Runtime);
+                            Logger.Error(e, LogType.Runtime);
+                        }
+                    }
+
+                    Load(true);
+                    var defaultMap = MapManager.FindMapFromMd5(DefaultMapChecksum);
+                    if (defaultMap != null)
+                    {
+                        MapManager.Selected.Value = defaultMap;
+                        AudioEngine.LoadCurrentTrack();
+                    }
+                }
+            }
+        }
+        '@
+        Set-Content -Path $path2 -Value $mdcCode -Encoding UTF8
+
+        # ========================================================
+        # 3. ReplayHelper.cs (Fixed: Compressed format + tiebreakers)
+        # ========================================================
+        $path3 = "Quaver.Shared/Helpers/ReplayHelper.cs"
         $rhCode = @'
         using System;
         using System.IO;
@@ -57,13 +783,12 @@ jobs:
                     try
                     {
                         var sb = new StringBuilder();
-                        sb.AppendLine($"Map: {map.Artist} - {map.Title} [{map.DifficultyName}]");
+                        sb.AppendLine($"Map: {map.Artist} - {map.Title}[{map.DifficultyName}]");
                         sb.AppendLine($"Date: {DateTime.Now}");
                         sb.AppendLine("------------------------------------------------");
                         sb.AppendLine(" TIME (ms) | LN | TYPE |  HIT DIFF | JUDGEMENT");
                         sb.AppendLine("------------------------------------------------");
 
-                        // Get expected events
                         var expected = new List<(float Time, int Lane, KeyPressType Type, bool IsLN)>();
                         foreach (var note in map.HitObjects)
                         {
@@ -72,7 +797,6 @@ jobs:
                                 expected.Add((note.EndTime, note.Lane, KeyPressType.Release, true));
                         }
                         
-                        // FIXED: Tie-breaker for notes on the exact same millisecond
                         expected = expected
                             .OrderBy(x => x.Time)
                             .ThenBy(x => x.Lane)
@@ -85,7 +809,6 @@ jobs:
                             var stat = stats[i];
                             var exp = expected[i]; 
 
-                            // COMPRESSED TYPES: NRM (Normal), LNH (Head), LNT (Tail)
                             string noteType = exp.Type == KeyPressType.Press ? (exp.IsLN ? "LNH" : "NRM") : "LNT";
                             
                             string hitDiff = "MISS";
@@ -107,44 +830,25 @@ jobs:
             }
         }
         '@
-        Set-Content -Path $path -Value $rhCode -Encoding UTF8
+        Set-Content -Path $path3 -Value $rhCode -Encoding UTF8
 
         # ========================================================
-        # 2. GameplayScreen.cs (Injects the Export Call)
+        # 4. GameplayScreen.cs (Inject Export Call cleanly)
         # ========================================================
-        $path = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
-        Write-Host "Force Writing: $path"
+        $path4 = "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs"
+        if (Test-Path "BuildPatches/GameplayScreen.cs") { $path4 = "BuildPatches/GameplayScreen.cs" }
         
-        # Reset file first to ensure a clean slate
-        git checkout -- $path 2>$null
-        $gpContent = Get-Content $path -Raw
-        
-        # We replace the standard ExportReplayToText call with our new Detailed Analysis
+        $gpContent = Get-Content $path4 -Raw
         $oldExport = 'ReplayHelper.ExportReplayToText(ReplayCapturer.Replay, "last_replay_debug.txt");'
-        $newExport = '
-            if (Ruleset?.ScoreProcessor?.Stats != null && Map != null) {
-                ReplayHelper.ExportDetailedAnalysis(Ruleset.ScoreProcessor.Stats, Map);
-            }
-        '
+        $newExport = 'if (Ruleset?.ScoreProcessor?.Stats != null && Map != null) { ReplayHelper.ExportDetailedAnalysis(Ruleset.ScoreProcessor.Stats, Map); }'
         
         if ($gpContent.Contains($oldExport)) {
             $gpContent = $gpContent.Replace($oldExport, $newExport)
         } else {
-            # Fallback just in case it's missing, inject right before Metronome disposal
             $gpContent = $gpContent.Replace('Metronome?.Dispose();', "$newExport `n            Metronome?.Dispose();")
         }
-
-        Set-Content -Path $path -Value $gpContent -Encoding UTF8
-
-        # ========================================================
-        # 3. MapDatabaseCache.cs (Crash Fix)
-        # ========================================================
-        $path = "Quaver.Shared/Database/Maps/MapDatabaseCache.cs"
-        Write-Host "Force Writing: $path"
-        git checkout -- $path 2>$null
-        $content = Get-Content $path -Raw
-        $content = $content.Replace('var map = Map.FromQua(Qua.Parse(file, true), file);', 'Map map = null; try { map = Map.FromQua(Qua.Parse(file, true), file); } catch (Exception e) { Wobble.Logging.Logger.Error($"[CRITICAL SKIP] Failed to load {file}: {e}", Wobble.Logging.LogType.Runtime); continue; }')
-        Set-Content -Path $path -Value $content -Encoding UTF8
+        Set-Content -Path $path4 -Value $gpContent -Encoding UTF8
+        Set-Content -Path "Quaver.Shared/Screens/Gameplay/GameplayScreen.cs" -Value $gpContent -Encoding UTF8
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
