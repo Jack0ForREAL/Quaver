@@ -753,7 +753,7 @@ jobs:
         Set-Content -Path $path2 -Value $mdcCode -Encoding UTF8
 
         # ========================================================
-        # 3. ReplayHelper.cs (LLM-Optimized token compression)
+        # 3. ReplayHelper.cs (LLM-Optimized Segmented Analysis)
         # ========================================================
         $path3 = "Quaver.Shared/Helpers/ReplayHelper.cs"
         Write-Host "Force Writing: $path3"
@@ -795,17 +795,15 @@ jobs:
                         sb.AppendLine($"Mode: {map.Mode} | BPM: {map.GetCommonBpm().ToString("F1", inv)} | Notes: {map.HitObjects.Count}");
 
                         int scrollSpeed = 0;
-                        string scrollDir = "Down";
                         try
                         {
-                            if (map.Mode == GameMode.Keys4) { scrollSpeed = ConfigManager.ScrollSpeed4K?.Value ?? 0; scrollDir = ConfigManager.ScrollDirection4K?.Value.ToString() ?? "Down"; }
-                            else if (map.Mode == GameMode.Keys7) { scrollSpeed = ConfigManager.ScrollSpeed7K?.Value ?? 0; scrollDir = ConfigManager.ScrollDirection7K?.Value.ToString() ?? "Down"; }
+                            scrollSpeed = ConfigManager.ScrollSpeeds[map.Mode].Value;
                         } catch { }
 
                         double visMs = scrollSpeed > 0 ? 610000.0 / scrollSpeed : 0;
-                        sb.AppendLine($"ScrollSpeed: {scrollSpeed} | ScrollDirection: {scrollDir} | NoteVisibilityWindowMs: {visMs.ToString("F1", inv)}");
+                        sb.AppendLine($"ScrollSpeed: {scrollSpeed} | NoteVisibilityWindowMs: {visMs.ToString("F1", inv)}");
 
-                        // 2. HEADER: Judgments & Windows
+                        // 2. HEADER: Judgments & Accuracy
                         if (processor != null)
                         {
                             try {
@@ -835,7 +833,7 @@ jobs:
                         AppendSegments(sb, stats, map, inv);
                         sb.AppendLine();
 
-                        // 4. NOTES: Raw Data
+                        // 4. NOTES: Compressed note trace
                         sb.AppendLine("=== NOTES ===");
                         sb.AppendLine("# FORMAT: Time:LaneType+Diff (N=Normal H=LN-Head T=LN-Tail M=Miss)");
 
@@ -955,7 +953,7 @@ jobs:
                     
                     var inv = CultureInfo.InvariantCulture;
                     string r(int v) => ((double)v / total).ToString("F2", inv);
-                    int keys = map.Mode == GameMode.Keys7 ? 7 : 4;
+                    int keys = map.GetKeyCount();
                     double mid = (keys - 1) / 2.0;
                     int leftN = notes.Count(x => x.Lane - 1 < mid);
                     int rightN = notes.Count(x => x.Lane - 1 > mid);
