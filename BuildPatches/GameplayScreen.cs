@@ -301,7 +301,7 @@ namespace Quaver.Shared.Screens.Gameplay
 
             if (ReplayCapturer?.Replay != null && ReplayCapturer.Replay.Frames.Count > 0)
             {
-                ReplayHelper.ExportReplayToText(ReplayCapturer.Replay, "last_replay_debug.txt");
+                if (Ruleset?.ScoreProcessor?.Stats != null && Map != null) { ReplayHelper.ExportDetailedAnalysis(Ruleset.ScoreProcessor.Stats, Map, Ruleset.ScoreProcessor); }
             }
 
             Metronome?.Dispose();
